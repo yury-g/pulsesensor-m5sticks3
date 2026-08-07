@@ -7,7 +7,28 @@
 #   stick.sh flash <image.bin>   full firmware flash (rarely needed)
 set -u
 CMD=${1:-status}
-PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)
+# With a Tab5 also plugged in there are several usbmodem nodes, so "first one"
+# is wrong. Override with STICK_PORT=/dev/cu.usbmodemXXXX, otherwise pick the
+# first node that actually answers as MicroPython.
+if [ -n "${STICK_PORT:-}" ]; then
+  PORT="$STICK_PORT"
+else
+  PORT=""
+  for _p in $(ls /dev/ | grep '^cu\.usbmodem'); do
+    if /usr/bin/python3 -c "
+import serial,sys,time
+try:
+    s=serial.Serial('/dev/$_p',115200,timeout=0.6)
+    s.write(b'\x03\x03\r\n'); time.sleep(0.3)
+    s.write(b'print(1)\r\n'); time.sleep(0.4)
+    d=s.read(200); s.close()
+    sys.exit(0 if b'1' in d or b'>>>' in d else 1)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null; then PORT="/dev/$_p"; break; fi
+  done
+  [ -z "$PORT" ] && PORT=$(ls /dev/ | grep -m1 '^cu\.usbmodem' | sed 's|^|/dev/|')
+fi
 DIR=/Users/mininarwhal/MStackSTICK-S3
 ESPTOOL=/Users/mininarwhal/Library/Arduino15/packages/m5stack/tools/esptool_py/5.0.dev1/esptool
 

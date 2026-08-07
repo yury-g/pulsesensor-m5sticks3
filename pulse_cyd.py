@@ -61,6 +61,24 @@ BPM_AVERAGE_N = 10             # classic PulseSensor rate[] smoothing.
 BEAT_FLASH_MS = 200            # duration of the beat flash
 STALE_MS = 1500                # no qualified beat this long -> stop claiming
                                # full confidence even if the counter is high
+# --- link to the Tab5 remote display ---
+# ESP-NOW would be the natural choice, but the Tab5 is an ESP32-P4 with NO
+# radio of its own: Wi-Fi comes from an ESP32-C6 over SDIO (ESP-Hosted), and
+# that build exposes only a Wi-Fi netif - `import espnow` fails with
+# "no module named '_espnow'". So the link is UDP over a private SoftAP that
+# the Tab5 hosts and this stick joins automatically.
+# Still ZERO-TOUCH: both ends hardcode the SSID; no router, no user setup.
+LINK_ENABLED = True
+LINK_SSID = "PulseSensor-Link"
+LINK_PSK = "pulse1234"         # WPA2 needs >= 8 chars
+LINK_HOST = "192.168.4.1"      # the Tab5, as SoftAP gateway
+LINK_PORT = 5005
+LINK_MAGIC = b"PS"
+LINK_VER = 3                   # v3: 2 waveform samples per packet, + flags
+LINK_SAMPLES = 2               # batch: full 50Hz detail at 25 packets/s
+LINK_EVERY = 2                 # send every Nth sample (50Hz/2 = 25 packets/s)
+LINK_RETRY_MS = 3000           # how often to retry joining, when not connected
+
 RESYNC_LABEL_MS = 900          # how long the RESYNC confirmation shows
 RESYNC_FAST_MS = 6000          # fast-lock window after a resync
 Q_UP_FAST = 6                  # confidence per beat during that window
@@ -70,7 +88,7 @@ Q_UP_FAST = 6                  # confidence per beat during that window
 
 M5.begin()
 lcd = M5.Lcd
-lcd.setRotation(1)
+lcd.setRotation(3)          # 3 = landscape, flipped 180 from rotation 1
 W, H = lcd.width(), lcd.height()            # 240 x 135
 
 def clamp(v, lo, hi):
@@ -299,6 +317,11 @@ def detect(now):
 
 # ============================== COACH ==============================
 
+# state -> wire code, so the Tab5 renders identical text/colour without
+# shipping strings over the air
+STATE_CODES = {"NO SIGNAL": 0, "HOLD STEADY": 1, "SEARCHING": 2, "GOOD WAVE": 3,
+               "LOCKING": 4, "SIGNAL LOST": 5, "QUALIFIED": 6, "RESYNC": 7}
+
 def coach():
     """(label, colour) - the single source of truth for the screen's colour.
 
@@ -478,10 +501,112 @@ def read_status():
     except Exception:
         linked = False
 
+# ============================== LINK ==============================
+# Failure here must NEVER take down the local display, so everything is
+# wrapped and the app runs fine with no radio at all.
+
+_sock = None
+_wlan = None
+_link_seq = 0
+_link_up = False
+_link_next_try = 0
+_link_err = False
+_sbuf = []
+
+def link_init():
+    """Bring up the radio and start joining the Tab5's AP. Never blocks:
+    connection completes in the background and link_send() polls for it."""
+    global _sock, _wlan
+    if not LINK_ENABLED:
+        return
+    try:
+        import network, socket
+        _wlan = network.WLAN(network.STA_IF)
+        _wlan.active(True)
+        if not _wlan.isconnected():
+            _wlan.connect(LINK_SSID, LINK_PSK)
+        _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _sock.setblocking(False)
+        print("LINK: joining '%s' -> udp %s:%d" % (LINK_SSID, LINK_HOST, LINK_PORT))
+    except Exception as ex:
+        print("LINK: unavailable (%s) - running standalone" % ex)
+
+def link_send():
+    """16-byte fixed packet. Non-blocking; any failure is ignored so the
+    display never stalls because of the radio."""
+    global _link_seq, _link_up, _link_next_try
+    if _sock is None or _wlan is None:
+        return
+    # Buffer EVERY sample and send them batched. One point per packet made the
+    # Tab5 trace visibly angular (points ~10px apart on a 1240px window); this
+    # keeps the packet rate the same but doubles the drawn resolution.
+    _sbuf.append(sig)
+    if len(_sbuf) < LINK_SAMPLES:
+        return
+    now_ms = time.ticks_ms()
+    if not _wlan.isconnected():
+        if _link_up:
+            _link_up = False
+            print("LINK: lost")
+        if time.ticks_diff(now_ms, _link_next_try) >= 0:
+            _link_next_try = time.ticks_add(now_ms, LINK_RETRY_MS)
+            try:
+                _wlan.connect(LINK_SSID, LINK_PSK)
+            except Exception:
+                pass
+        return
+    if not _link_up:
+        _link_up = True
+        try:
+            print("LINK: up, ip=%s" % _wlan.ifconfig()[0])
+        except Exception:
+            print("LINK: up")
+    label, _ = coach()
+    try:
+        s0 = _sbuf[0]
+        s1 = _sbuf[-1]
+        _sbuf.clear()
+        _a = min(1023, amp)
+        _t = int(thresh) & 0x3FF
+        _i = min(65535, ibi_ms)
+        pkt = (LINK_MAGIC
+               + bytes((LINK_VER,
+                        DEV_ID[0], DEV_ID[1], DEV_ID[2],
+                        min(255, bpm),
+                        min(255, quality),
+                        STATE_CODES.get(label, 2),
+                        (1 if beating() else 0)
+                        | (2 if time.ticks_diff(resync_label_until,
+                                                time.ticks_ms()) > 0 else 0),
+                        s0 >> 8, s0 & 0xFF,
+                        s1 >> 8, s1 & 0xFF,
+                        (smin >> 8) & 0xFF, smin & 0xFF,
+                        (smax >> 8) & 0xFF, smax & 0xFF,
+                        _t >> 8, _t & 0xFF,
+                        _a >> 8, _a & 0xFF,
+                        _i >> 8, _i & 0xFF)))
+        _sock.sendto(pkt, (LINK_HOST, LINK_PORT))
+    except Exception as ex:
+        _sbuf.clear()
+        # Report the FIRST failure. A blanket "except: pass" here previously
+        # swallowed a NameError on every packet, so the link looked connected
+        # while sending nothing at all.
+        global _link_err
+        if not _link_err:
+            _link_err = True
+            print("LINK: send failed (%s: %s)" % (type(ex).__name__, ex))
+
+try:
+    import machine as _m
+    DEV_ID = _m.unique_id()[-3:]
+except Exception:
+    DEV_ID = b"\x00\x00\x00"
+
 # ============================== BOOT ==============================
 
 lcd.fillScreen(BG)
 read_status()
+link_init()
 draw_header()
 draw_graph_frame()
 draw_bpm_tile()
@@ -535,6 +660,7 @@ while True:
     track_range(sig)
     detect(now)
     draw_wave()
+    link_send()
 
     # redraw only what changed: value, coach state, or the beat flash
     label, col = coach()
