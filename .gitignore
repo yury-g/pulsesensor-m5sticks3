@@ -1,0 +1,18 @@
+# Factory UIFlow2 firmware — M5Stack's binary, 8MB. Not redistributed here.
+# See README "Restoring a stick from scratch" for how to fetch it.
+uiflow_sticks3.bin
+uiflow_atoms3r.bin
+*.bin
+
+# Arduino/ESP-IDF build artifacts from the abandoned C path (~100MB)
+build_307/
+build_c/
+build_generic/
+hello_world/
+test_a_bare/
+test_c_noserial/
+
+# scratch
+*.bak
+.flash_status.log
+.DS_Store

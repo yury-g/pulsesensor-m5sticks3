@@ -1,0 +1,454 @@
+<title>PulseSensor on M5StickS3 — screen mock</title>
+<style>
+  :root {
+    --ground: #f4f5f6; --panel: #ffffff; --ink: #1b1f22; --ink-soft: #5b656c;
+    --rule: #d8dde0; --accent: #0f8ea3; --shell: #2a2f33; --shell-edge: #14181a;
+    --good: #0e7c62; --warn: #a8590a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #14181a; --panel: #1c2124; --ink: #e7ecee; --ink-soft: #98a3a9;
+      --rule: #2e3639; --accent: #3ecbdf; --shell: #23282b; --shell-edge: #0a0d0e;
+      --good: #00be9a; --warn: #f87c00;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f4f5f6; --panel: #ffffff; --ink: #1b1f22; --ink-soft: #5b656c;
+    --rule: #d8dde0; --accent: #0f8ea3; --shell: #2a2f33; --shell-edge: #14181a;
+    --good: #0e7c62; --warn: #a8590a;
+  }
+  :root[data-theme="dark"] {
+    --ground: #14181a; --panel: #1c2124; --ink: #e7ecee; --ink-soft: #98a3a9;
+    --rule: #2e3639; --accent: #3ecbdf; --shell: #23282b; --shell-edge: #0a0d0e;
+    --good: #00be9a; --warn: #f87c00;
+  }
+
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.55; margin: 0; padding: 32px 20px 56px;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
+
+  header { display: flex; flex-direction: column; gap: 6px; }
+  .eyebrow {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
+  }
+  h1 { font-size: 26px; margin: 0; font-weight: 650; text-wrap: balance; letter-spacing: -.01em; }
+  .sub { color: var(--ink-soft); font-size: 14.5px; margin: 0; max-width: 62ch; }
+
+  .bench { display: grid; grid-template-columns: minmax(0, auto) minmax(250px, 1fr); gap: 26px; align-items: start; }
+  @media (max-width: 820px) { .bench { grid-template-columns: 1fr; } }
+
+  .stick {
+    background: linear-gradient(178deg, var(--shell), var(--shell-edge));
+    border-radius: 14px; padding: 16px 15px 34px; margin: 0;
+    box-shadow: 0 12px 30px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.07);
+    position: relative; width: max-content; max-width: 100%;
+  }
+  .screen-bezel { background: #000; border-radius: 4px; padding: 5px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.09); }
+  canvas#screen {
+    display: block; width: 720px; max-width: 100%; height: auto; aspect-ratio: 240 / 135;
+    image-rendering: pixelated; border-radius: 2px;
+  }
+  .btn-a {
+    position: absolute; left: 50%; transform: translateX(-50%); bottom: 11px;
+    width: 46px; height: 13px; border-radius: 7px;
+    background: #3c4247; box-shadow: inset 0 1px 0 rgba(255,255,255,.12);
+  }
+  .stick figcaption {
+    margin-top: 12px; text-align: center; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10.5px; letter-spacing: .09em; color: #7b858b; text-transform: uppercase;
+  }
+
+  .rig { display: flex; flex-direction: column; gap: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 15px 16px; display: flex; flex-direction: column; gap: 13px;
+  }
+  .card h2 {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10.5px;
+    letter-spacing: .13em; text-transform: uppercase; color: var(--ink-soft); margin: 0; font-weight: 600;
+  }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .row label { font-size: 14px; }
+  .val { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px;
+    font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+
+  .toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; font-size: 14px; user-select: none; }
+  .toggle input { appearance: none; margin: 0; width: 38px; height: 21px; border-radius: 11px;
+    background: var(--rule); position: relative; cursor: pointer; transition: background .18s; flex: none; }
+  .toggle input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px;
+    border-radius: 50%; background: #fff; transition: transform .18s; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .toggle input:checked { background: var(--accent); }
+  .toggle input:checked::after { transform: translateX(17px); }
+  .toggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .log {
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
+    color: var(--ink-soft); padding: 12px 14px; height: 128px; overflow-y: auto;
+    display: flex; flex-direction: column-reverse; gap: 2px; font-variant-numeric: tabular-nums;
+  }
+  .log b { color: var(--good); font-weight: 600; }
+
+  .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px 26px; }
+  .legend div { font-size: 13.5px; color: var(--ink-soft); }
+  .legend b { color: var(--ink); font-weight: 600; display: block; font-size: 13.5px; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
+
+  footer { border-top: 1px solid var(--rule); padding-top: 16px; color: var(--ink-soft); font-size: 13px; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .93em; color: var(--ink); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">M5StickS3 · UIFlow2 MicroPython · sensor on G2</span>
+    <h1>PulseSensor screen mock</h1>
+    <p class="sub">The screen below runs the same detector as <code>pulse_cyd.py</code> on the hardware —
+      identical thresholds, quality counters and column-by-column redraw — driven by a synthesized PPG
+      waveform instead of a real finger.</p>
+  </header>
+
+  <div class="bench">
+    <figure class="stick">
+      <div class="screen-bezel"><canvas id="screen" width="240" height="135"></canvas></div>
+      <div class="btn-a"></div>
+      <figcaption>240 × 135 · shown at 3×</figcaption>
+    </figure>
+
+    <div class="rig">
+      <div class="card">
+        <h2>Sensor simulation</h2>
+        <label class="toggle"><input type="checkbox" id="finger" checked><span>Finger on the sensor</span></label>
+        <div class="field">
+          <div class="row"><label for="hr">Heart rate</label><span class="val" id="hrv">72 BPM</span></div>
+          <input type="range" id="hr" min="40" max="180" value="72">
+        </div>
+        <div class="field">
+          <div class="row"><label for="noise">Noise</label><span class="val" id="noisev">low</span></div>
+          <input type="range" id="noise" min="0" max="100" value="12">
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Device status</h2>
+        <div class="field">
+          <div class="row"><label for="batt">Battery</label><span class="val" id="battv">64%</span></div>
+          <input type="range" id="batt" min="0" max="100" value="64">
+        </div>
+        <label class="toggle"><input type="checkbox" id="charging"><span>Charging</span></label>
+        <label class="toggle"><input type="checkbox" id="linked"><span>Wi-Fi connected</span></label>
+      </div>
+
+      <div class="card" style="gap:8px">
+        <h2>Serial monitor</h2>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div><b><span class="swatch" style="background:#5BE7FF"></span>Blue</b>Collecting — nothing trustworthy yet.</div>
+    <div><b><span class="swatch" style="background:#FFE34D"></span>Yellow</b>Locking on. Also used for the THR label and beat ticks over the graph.</div>
+    <div><b><span class="swatch" style="background:#6EF58A"></span>Green</b>Full confidence — the reading is trustworthy.</div>
+    <div><b>One colour language</b>Waveform, heart, coach and borders always agree, so the screen reads at a glance.</div>
+  </div>
+
+  <footer>BPM shows <code>--</code> until the detector locks. Turn the finger off, or push noise up, to
+    watch the coach drop to <code>NO SIGNAL</code> and the whole screen fall back to blue.</footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  // Mirrors pulse_cyd.py: same palette, same layout, same detector.
+
+  // ---- palette ----
+  var BG="#060A06", PANEL="#0C140C", GRID="#1C4A32", GRID_SOFT="#143323",
+      TEXT="#FFFFFF", LABEL="#5BE7FF", ANNOT="#FFE34D",
+      BLUE="#5BE7FF", YELLOW="#FFE34D", GREEN="#6EF58A";
+
+  // ---- detector config ----
+  var PULSE_THRESHOLD=550, NO_BEAT_TIMEOUT=3000, MIN_BPM=40, MAX_BPM=180,
+      MIN_IBI=333, MAX_IBI=1500, MIN_AMP=20, REFRACTORY=250,
+      Q_STEPS=12, Q_LOCK=10, Q_UP=3, Q_DOWN=1, RANGE_SNAP=80,
+      FLAT_RANGE=90, FLAT_AMP=12, REARM_RANGE=120,
+      REARM_NO_BEAT=2200, REARM_COOLDOWN=3500,
+      BPM_AVERAGE_N=10, BEAT_FLASH_MS=200, STALE_MS=1500, SAMPLE_MS=20;
+
+  var cv=document.getElementById("screen"), ctx=cv.getContext("2d"), W=240, H=135;
+
+  function clamp(v,lo,hi){ return v<lo?lo:v>hi?hi:v; }
+  function mapv(v,a,b,c,d){ if(b===a) return c; return c+(v-a)*(d-c)/(b-a); }
+  function rect(x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(x|0,y|0,w|0,h|0); }
+  function frameRect(x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(x,y,w,1);
+    ctx.fillRect(x,y+h-1,w,1); ctx.fillRect(x,y,1,h); ctx.fillRect(x+w-1,y,1,h); }
+  function px(x,y,c){ rect(x,y,1,1,c); }
+  // calibrated to the device font: digit advance 8*size, line box 15*size
+  function setFont(size){ ctx.font = Math.round(13.3*size)+"px ui-monospace, Menlo, monospace"; }
+  function tw(s,size){ size=size||1; setFont(size); return ctx.measureText(String(s)).width; }
+  function th(size){ return 15*(size||1); }
+  function textAt(x,y,s,size,fg){ setFont(size); ctx.fillStyle=fg;
+    ctx.textBaseline="top"; ctx.fillText(String(s), x, y+1.5*size); }
+
+  // ---- layout ----
+  var SAFE=5, L=SAFE, R=W-SAFE, BOT=H-SAFE;
+  var HDR_Y=4, HDR_BOT=20, NAME="PulseSensor", NAME_W=tw(NAME,1);
+  var BATT_W=22, BATT_H=11, BATT_X=R-(BATT_W+3), BATT_Y=6;
+  var WIFI_W=12, WIFI_X=BATT_X-6-WIFI_W, WIFI_Y=6;
+  var HEART_R=7, HEART_X=L+NAME_W+10+HEART_R, HEART_Y=10;
+  var GX=7, GY=24, GW=W-14, GH=64, GRID_STEP=16, GRID_COL_STEP=34;
+  var PY=93, PH=36, TILE_W=112, BPM_X=L, COACH_X=123;
+  var LBL_SIZE=1, NUM_SIZE=2, LBL_H=th(LBL_SIZE), LBL_Y=PY+Math.floor((PH-LBL_H)/2);
+  var THR_W=62, THR_X=GX+GW-THR_W-2, THR_Y=GY+2;
+  var CONF_SEGS=10, CONF_SEG_W=4;
+
+  // ---- state ----
+  var sig=512, smin=512, smax=512, thresh=PULSE_THRESHOLD, peak=512, trough=512,
+      pulsing=false, amp=0, ibi_ms=600, bpm=0, rates=[], quality=0, locked=false,
+      firstBeat=true, secondBeat=false, now=0,
+      lastBeat=0, lastQual=0, lastRearm=0, rearms=0,
+      flashUntil=0, beatMark=false, gx=0, lastGy=GY+GH/2,
+      batt=64, charging=false, linked=false;
+
+  function beating(){ return flashUntil - now > 0; }
+
+  function trackRange(s){
+    smin = Math.min(smin+1, s);
+    smax = Math.max(smax-1, s);
+    if (smax-smin < RANGE_SNAP){ smin = s-RANGE_SNAP/2; smax = s+RANGE_SNAP/2; }
+  }
+  function qualify(ibi){
+    var rate = ibi ? Math.round(60000/ibi) : 0;
+    return rate>=MIN_BPM && rate<=MAX_BPM && ibi>=MIN_IBI && ibi<=MAX_IBI && amp>=MIN_AMP;
+  }
+  function smoothedBpm(ibi){
+    rates.push(ibi);
+    if (rates.length > BPM_AVERAGE_N) rates.shift();
+    var sum = rates.reduce(function(a,b){return a+b;},0);
+    return Math.round(60000*rates.length/sum);
+  }
+  function rearm(reason){
+    var mid = smax>smin ? (smin+smax)/2 : PULSE_THRESHOLD;
+    thresh=peak=trough=mid; pulsing=false; quality=0; bpm=0; rates=[];
+    locked=false; rearms++; lastRearm=lastBeat=now;
+    logMsg("re-arm: "+reason, false);
+  }
+
+  function detect(){
+    var n = now - lastBeat, gate = ibi_ms*3/5;
+    if (sig<thresh && n>gate && sig<trough) trough=sig;
+    if (sig>thresh && sig>peak) peak=sig;
+
+    if (n>REFRACTORY && n>gate && sig>thresh && !pulsing){
+      pulsing = true;
+      var newIbi = n; lastBeat = now;
+      if (secondBeat){ secondBeat=false; ibi_ms=newIbi; }
+      else if (firstBeat){ firstBeat=false; secondBeat=true; }
+      else {
+        ibi_ms = newIbi;
+        var good = qualify(newIbi);
+        if (good){ bpm=smoothedBpm(newIbi); lastQual=now; quality=Math.min(Q_STEPS,quality+Q_UP); }
+        else quality = Math.max(0, quality-Q_DOWN);
+        locked = quality >= Q_LOCK;
+        if (locked && good){
+          flashUntil = now + BEAT_FLASH_MS; beatMark = true;
+          logMsg("BEAT bpm="+bpm+" ibi="+newIbi+" amp="+Math.round(amp)+" Q="+quality, true);
+        }
+      }
+    }
+    if (sig<thresh && pulsing){
+      pulsing=false; amp=peak-trough; thresh=trough+amp/2; peak=trough=thresh;
+    }
+    if (now-lastQual > NO_BEAT_TIMEOUT){ locked=false; quality=0; bpm=0; }
+    if (!locked && smax-smin>=REARM_RANGE && (now-lastBeat)>=REARM_NO_BEAT
+        && (now-lastRearm)>=REARM_COOLDOWN) rearm("live signal, no beats");
+  }
+
+  // ---- coach: worst problem first, so advice is always actionable ----
+  function coach(){
+    var rng = smax-smin, stale = (now-lastQual) > STALE_MS;
+    if (rng<FLAT_RANGE || amp<FLAT_AMP) return ["NO SIGNAL", BLUE];
+    if (amp<MIN_AMP)                    return ["HOLD STEADY", BLUE];
+    if (locked && stale)                return ["SIGNAL LOST", YELLOW];
+    if (locked && quality>=Q_STEPS)     return ["QUALIFIED", GREEN];
+    if (locked)                         return ["LOCKING", YELLOW];
+    if (quality>0)                      return ["LOCKING", YELLOW];
+    if (rng>=REARM_RANGE)               return ["GOOD WAVE", BLUE];
+    return ["SEARCHING", BLUE];
+  }
+  function stateColor(){ return coach()[1]; }
+
+  // ---- drawing ----
+  function drawHeart(cx,cy,r,col){
+    ctx.fillStyle=col;
+    ctx.beginPath(); ctx.arc(cx-r/2, cy-r/3, r/2+1, 0, 6.284); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+r/2, cy-r/3, r/2+1, 0, 6.284); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cx-r, cy-r/4); ctx.lineTo(cx+r, cy-r/4);
+    ctx.lineTo(cx, cy+r); ctx.closePath(); ctx.fill();
+  }
+  function drawHeaderHeart(){
+    var r = beating() ? HEART_R : HEART_R-2;
+    rect(HEART_X-HEART_R-1, 0, (HEART_R+1)*2, HDR_BOT-1, BG);
+    drawHeart(HEART_X, HEART_Y, r, stateColor());
+  }
+  function drawLink(){
+    var col = linked ? stateColor() : GRID;
+    rect(WIFI_X, WIFI_Y, WIFI_W, 12, BG);
+    for (var i=0;i<3;i++){ var h=4+i*3; rect(WIFI_X+i*4, WIFI_Y+11-h, 3, h, col); }
+  }
+  function drawBattery(){
+    var lvl = clamp(batt,0,100);
+    var col = charging ? BLUE : (lvl<=25 ? YELLOW : GREEN);
+    frameRect(BATT_X, BATT_Y, BATT_W, BATT_H, LABEL);
+    rect(BATT_X+BATT_W, BATT_Y+3, 3, 5, LABEL);
+    rect(BATT_X+2, BATT_Y+2, BATT_W-4, BATT_H-4, BG);
+    var fill = Math.round(lvl*(BATT_W-4)/100);
+    if (fill) rect(BATT_X+2, BATT_Y+2, fill, BATT_H-4, col);
+  }
+  function drawHeader(){
+    rect(0,0,W,HDR_BOT,BG);
+    rect(0,HDR_BOT-1,W,1,GRID);
+    textAt(L, HDR_Y, NAME, 1, TEXT);
+    drawLink(); drawBattery(); drawHeaderHeart();
+  }
+  function drawThr(){
+    rect(THR_X-2, THR_Y-1, THR_W+2, 16, BG);
+    textAt(THR_X, THR_Y, "THR "+String(Math.round(thresh)).padStart(4," "), 1, ANNOT);
+  }
+  function threshDot(cx){
+    if (cx%6) return;
+    var y = clamp(mapv(PULSE_THRESHOLD, smin, smax, GY+GH-4, GY+4), GY+4, GY+GH-4);
+    px(GX+cx, y|0, ANNOT);
+  }
+  function clearColumn(cx){
+    var x=GX+cx;
+    rect(x, GY, 1, GH, (cx%GRID_COL_STEP===0)?GRID_SOFT:BG);
+    for (var y=0;y<=GH;y+=GRID_STEP) px(x, GY+y, GRID_SOFT);
+    threshDot(cx);
+  }
+  function drawGraphFrame(){
+    frameRect(GX-2, GY-2, GW+4, GH+4, GRID);
+    rect(GX, GY, GW, GH, BG);
+    for (var x=0;x<GW;x+=GRID_COL_STEP) rect(GX+x, GY, 1, GH, GRID_SOFT);
+    for (var y=0;y<=GH;y+=GRID_STEP) rect(GX, GY+y, GW, 1, GRID_SOFT);
+    for (var d=0;d<GW;d+=6) threshDot(d);
+    drawThr();
+  }
+  function drawWave(){
+    var y = clamp(mapv(sig, smin, smax, GY+GH-4, GY+4), GY+4, GY+GH-4);
+    for (var k=0;k<3;k++) clearColumn((gx+k)%GW);
+    if (beatMark){
+      beatMark=false;
+      for (var yy=GY; yy<GY+GH; yy+=3) px(GX+gx, yy, ANNOT);
+    }
+    if (gx){
+      ctx.strokeStyle=stateColor(); ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(GX+gx-1+0.5, lastGy+0.5);
+      ctx.lineTo(GX+gx+0.5, y+0.5); ctx.stroke();
+    }
+    if (GX+gx >= THR_X-2) drawThr();
+    lastGy=y; gx++;
+    if (gx>=GW){ gx=0; drawGraphFrame(); }
+  }
+  function drawBpmTile(){
+    var col=stateColor(), invert=beating(), bg = invert?col:PANEL;
+    rect(BPM_X, PY, TILE_W, PH, bg);
+    frameRect(BPM_X, PY, TILE_W, PH, locked?col:GRID);
+    textAt(BPM_X+6, LBL_Y, "BPM", LBL_SIZE, invert?BG:LABEL);
+    var s = locked ? String(bpm) : "--";
+    var size=NUM_SIZE, avail=TILE_W-12-tw("BPM",LBL_SIZE)-4;
+    while (size>1 && (tw(s,size)>avail || th(size)>PH-6)) size--;
+    var fg = invert?BG:(locked?col:LABEL);
+    textAt(BPM_X+TILE_W-6-tw(s,size), PY+Math.floor((PH-th(size))/2), s, size, fg);
+  }
+  function drawCoachTile(){
+    var c=coach(), label=c[0], col=c[1];
+    var conf = Math.floor(quality*100/Q_STEPS);
+    rect(COACH_X, PY, TILE_W, PH, PANEL);
+    frameRect(COACH_X, PY, TILE_W, PH, col);
+    textAt(COACH_X+6, PY+3, label, 1, col);
+    var filled = Math.floor(conf*CONF_SEGS/100), by = PY+21;
+    for (var i=0;i<CONF_SEGS;i++)
+      rect(COACH_X+6+i*CONF_SEG_W, by, CONF_SEG_W-1, 8, i<filled?col:GRID);
+    var pct = conf+"%";
+    textAt(COACH_X+TILE_W-6-tw(pct,1), by-3, pct, 1, col);
+  }
+
+  // ---- serial monitor ----
+  var logEl=document.getElementById("log"), logLines=[];
+  function logMsg(s, strong){
+    logLines.push((strong?"<b>":"<span>")+s+(strong?"</b>":"</span>"));
+    if (logLines.length>40) logLines.shift();
+    logEl.innerHTML = logLines.slice().reverse().join("");
+  }
+
+  // ---- synthesized PPG ----
+  var phase=0, rnd=0;
+  function ppgSample(dt){
+    var finger=document.getElementById("finger").checked;
+    var hr=+document.getElementById("hr").value;
+    var noise=+document.getElementById("noise").value/100;
+    if (!finger) return 500+(Math.random()-0.5)*(8+noise*30);
+    phase += dt/(60000/hr); phase %= 1;
+    var v = Math.exp(-Math.pow((phase-0.16)/0.075,2))
+          + 0.36*Math.exp(-Math.pow((phase-0.42)/0.11,2))
+          - 0.10*Math.exp(-Math.pow((phase-0.30)/0.05,2));
+    rnd = rnd*0.72 + (Math.random()-0.5)*0.28;
+    var wander = 26*Math.sin(phase*0.9 + performance.now()/9000)*noise;
+    return 470 + v*170*(1-noise*0.45) + rnd*150*noise + wander;
+  }
+
+  // ---- loop ----
+  var prev=null, acc=0, prevWall=performance.now();
+  function step(){
+    now += SAMPLE_MS;
+    sig = clamp(Math.round(ppgSample(SAMPLE_MS)), 0, 1023);
+    trackRange(sig);
+    detect();
+    drawWave();
+    var c = coach();
+    var cur = [bpm, c[0], quality, locked, beating()].join("|");
+    if (cur !== prev){
+      var pParts = prev===null ? null : prev.split("|");
+      if (pParts===null || c[0]!==pParts[1] || String(beating())!==pParts[4]) drawHeaderHeart();
+      drawBpmTile(); drawCoachTile();
+      prev = cur;
+    }
+  }
+  function frame(){
+    var wall=performance.now();
+    acc += Math.min(wall-prevWall, 200); prevWall=wall;
+    while (acc>=SAMPLE_MS){ step(); acc-=SAMPLE_MS; }
+    requestAnimationFrame(frame);
+  }
+
+  // ---- controls ----
+  var hrEl=document.getElementById("hr"), noiseEl=document.getElementById("noise"),
+      battEl=document.getElementById("batt");
+  hrEl.addEventListener("input", function(){ document.getElementById("hrv").textContent=hrEl.value+" BPM"; });
+  noiseEl.addEventListener("input", function(){
+    var n=+noiseEl.value;
+    document.getElementById("noisev").textContent = n<20?"low": n<55?"moderate":"heavy";
+  });
+  battEl.addEventListener("input", function(){
+    batt=+battEl.value; document.getElementById("battv").textContent=batt+"%"; drawBattery();
+  });
+  document.getElementById("charging").addEventListener("change", function(){ charging=this.checked; drawBattery(); });
+  document.getElementById("linked").addEventListener("change", function(){ linked=this.checked; drawLink(); });
+  document.getElementById("finger").addEventListener("change", function(){
+    logMsg(this.checked?"finger detected":"finger removed", false);
+  });
+
+  // ---- boot ----
+  rect(0,0,W,H,BG);
+  drawHeader(); drawGraphFrame(); drawBpmTile(); drawCoachTile();
+  logMsg("pulse_cyd running: G2 @ 50Hz, BPM averaged over "+BPM_AVERAGE_N+" beats", false);
+  requestAnimationFrame(frame);
+})();
+</script>
