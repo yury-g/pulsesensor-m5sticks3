@@ -96,6 +96,18 @@ holding the side button.
 | `ROADMAP.md` | Parked features (IMU motion gating, beat chime) with full hardware findings. |
 | `probe_imu.py`, `calib_motion.py`, `imu_check.py` | Hardware investigation tools. |
 
+## Buttons
+
+| Button | |
+|---|---|
+| **BtnA** (front, blue) | **RESYNC** — "look at THIS waveform, now." Retunes the threshold to the live signal, clears the stale interval gate and amplitude, and opens a 6 s fast-lock window so a clean wave locks in two beats instead of four. The coach flashes `RESYNC` to confirm the press. |
+| **BtnB** (side) | Full cold reset of the detector. |
+
+Use RESYNC when the screen shows an obviously good pulse wave but the coach will
+not engage. That happens when a bad detection leaves `ibi_ms` large — the detector
+gates beats at 3/5 of it, so real beats get discarded — or leaves `amp` stale-low,
+so `qualify()` rejects everything. A plain re-arm did not clear either.
+
 ## The screen
 
 One colour language — waveform, heart, coach and tile borders always agree:

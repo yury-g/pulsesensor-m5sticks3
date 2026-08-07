@@ -61,6 +61,10 @@ BPM_AVERAGE_N = 10             # classic PulseSensor rate[] smoothing.
 BEAT_FLASH_MS = 200            # duration of the beat flash
 STALE_MS = 1500                # no qualified beat this long -> stop claiming
                                # full confidence even if the counter is high
+RESYNC_LABEL_MS = 900          # how long the RESYNC confirmation shows
+RESYNC_FAST_MS = 6000          # fast-lock window after a resync
+Q_UP_FAST = 6                  # confidence per beat during that window
+                               # (locks in 2 clean beats instead of 4)
 
 # ============================== SETUP ==============================
 
@@ -148,6 +152,8 @@ first_beat, second_beat = True, False
 last_beat = last_qual = last_rearm = time.ticks_ms()
 rearms = 0
 flash_until = 0
+resync_label_until = 0          # showing the RESYNC confirmation
+resync_fast_until = 0           # inside the fast-lock window
 beat_mark = False               # draw a yellow tick at the next column
 batt, charging, linked = 0, False, False
 gx, last_gy = 0, GY + GH // 2
@@ -200,6 +206,42 @@ def rearm(reason):
     rearms += 1
     last_rearm = last_beat = time.ticks_ms()
 
+def resync():
+    """BtnA: "look at THIS waveform, now."
+
+    Plain rearm() was not enough. It reset the threshold but left two pieces of
+    stale state that actively block re-locking:
+      * ibi_ms still held the last (possibly wrong) interval, and the detector
+        gates beats at 3/5 of it - a stale 1400ms interval blocks every real
+        beat for 840ms.
+      * amp only updates on a falling edge, so a stale-low value made qualify()
+        reject perfectly good beats forever.
+    So a clean wave on screen could never lock, no matter how long you waited.
+
+    This clears both, seeds amp from the live signal range so the very next beat
+    can qualify, and opens a short fast-lock window so a good wave locks in two
+    beats instead of four."""
+    global thresh, peak, trough, pulsing, ibi_ms, amp, quality, bpm, rates
+    global locked, first_beat, second_beat, last_beat, last_qual, last_rearm
+    global rearms, resync_label_until, resync_fast_until
+    now = time.ticks_ms()
+    mid = (smin + smax) // 2 if smax > smin else PULSE_THRESHOLD
+    thresh = peak = trough = mid
+    pulsing = False
+    ibi_ms = 600                     # drop the stale 3/5 gate
+    amp = max(amp, smax - smin)      # trust what is on screen right now
+    first_beat, second_beat = True, False
+    quality = 0
+    bpm = 0
+    rates = []
+    locked = False
+    rearms += 1
+    last_beat = last_rearm = last_qual = now
+    resync_label_until = time.ticks_add(now, RESYNC_LABEL_MS)
+    resync_fast_until = time.ticks_add(now, RESYNC_FAST_MS)
+    print("RESYNC: thresh=%d amp=%d range=%d-%d (fast-lock %dms)"
+          % (thresh, amp, smin, smax, RESYNC_FAST_MS))
+
 def detect(now):
     global peak, trough, pulsing, amp, thresh, ibi_ms, bpm
     global quality, locked, first_beat, second_beat, last_beat, last_qual
@@ -228,7 +270,8 @@ def detect(now):
             if good:
                 bpm = smoothed_bpm(new_ibi)
                 last_qual = now
-                quality = min(Q_STEPS, quality + Q_UP)
+                step = Q_UP_FAST if time.ticks_diff(resync_fast_until, now) > 0 else Q_UP
+                quality = min(Q_STEPS, quality + step)
             else:
                 quality = max(0, quality - Q_DOWN)
             locked = quality >= Q_LOCK
@@ -259,31 +302,34 @@ def detect(now):
 def coach():
     """(label, colour) - the single source of truth for the screen's colour.
 
-    Ordered worst-problem-first so the advice is always the most useful thing
-    the user could act on, and so a high confidence counter can never mask a
-    signal that has actually gone bad:
-      1. nothing there at all          -> tell them to place a finger
-      2. touching but too weak         -> tell them to press / hold still
-      3. beats stopped arriving        -> don't keep claiming a good lock
-      4. full counter + fresh beats    -> GREEN, genuinely trustworthy
-      5. partial lock / building       -> YELLOW
-      6. waveform present, no beats yet-> BLUE
+    ORDER MATTERS. Real beat activity is checked BEFORE the flatness heuristic:
+    a small signal range was previously reported as "NO SIGNAL" even while the
+    detector was happily qualifying beats at 8/12, which is exactly the case
+    where the user is looking at a clean wave and the coach refuses to agree.
+    If beats are arriving and fresh, that is the truth - say so.
+      1. resync confirmation (button feedback)
+      2. fresh qualified beats  -> QUALIFIED / LOCKING
+      3. had a lock, beats died -> SIGNAL LOST
+      4. nothing there          -> NO SIGNAL
+      5. touching but too weak  -> HOLD STEADY
+      6. waveform, no beats yet -> GOOD WAVE / SEARCHING
     """
     rng = smax - smin
-    stale = time.ticks_diff(time.ticks_ms(), last_qual) > STALE_MS
+    now_ms = time.ticks_ms()
+    if time.ticks_diff(resync_label_until, now_ms) > 0:
+        return "RESYNC", YELLOW          # confirm the button press on screen
 
+    fresh = time.ticks_diff(now_ms, last_qual) <= STALE_MS
+    if fresh and locked and quality >= Q_STEPS:
+        return "QUALIFIED", GREEN
+    if fresh and (locked or quality > 0):
+        return "LOCKING", YELLOW
+    if locked:                           # counter high but beats dried up
+        return "SIGNAL LOST", YELLOW
     if rng < FLAT_RANGE or amp < FLAT_AMP:
         return "NO SIGNAL", BLUE
     if amp < MIN_AMP:
         return "HOLD STEADY", BLUE
-    if locked and stale:                     # counter high but beats dried up
-        return "SIGNAL LOST", YELLOW
-    if locked and quality >= Q_STEPS:
-        return "QUALIFIED", GREEN
-    if locked:
-        return "LOCKING", YELLOW
-    if quality > 0:
-        return "LOCKING", YELLOW
     if rng >= REARM_RANGE:
         return "GOOD WAVE", BLUE
     return "SEARCHING", BLUE
@@ -455,7 +501,7 @@ for _c in ("QUALIFIED", "HOLD STEADY", "SIGNAL LOST", "NO SIGNAL",
     _w = tw(_c)
     print("  coach %-13r %3dpx %s"
           % (_c, _w, "OK" if _w <= TILE_W - 12 else "TOO WIDE"))
-print("pulse_cyd running: G2 @ %dHz, BPM averaged over %d beats. BtnA = re-arm."
+print("pulse_cyd running: G2 @ %dHz, BPM averaged over %d beats. BtnA = RESYNC, BtnB = reset."
       % (1000 // SAMPLE_MS, BPM_AVERAGE_N))
 
 # ============================== MAIN LOOP ==============================
@@ -468,8 +514,10 @@ while True:
     M5.update()
     now = time.ticks_ms()
 
-    if M5.BtnA.wasPressed():
-        rearm("BtnA")
+    if M5.BtnA.wasPressed():             # front blue button
+        resync()
+    if M5.BtnB.wasPressed():             # side button: full cold reset
+        rearm("BtnB full reset")
 
     wait = time.ticks_diff(next_t, now)
     if wait > 0:
