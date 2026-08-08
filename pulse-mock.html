@@ -109,7 +109,7 @@
   <header>
     <span class="eyebrow">M5StickS3 · UIFlow2 MicroPython · sensor on G2</span>
     <h1>PulseSensor screen mock</h1>
-    <p class="sub">The screen below runs the same detector as <code>pulse_cyd.py</code> on the hardware —
+    <p class="sub">The screen below runs the same detector as <code>pulselink.py</code> on the hardware —
       identical thresholds, quality counters and column-by-column redraw — driven by a synthesized PPG
       waveform instead of a real finger.</p>
   </header>
@@ -166,7 +166,7 @@
 <script>
 (function () {
   "use strict";
-  // Mirrors pulse_cyd.py: same palette, same layout, same detector.
+  // Mirrors pulselink.py: same palette, same layout, same detector.
 
   // ---- palette ----
   var BG="#060A06", PANEL="#0C140C", GRID="#1C4A32", GRID_SOFT="#143323",
@@ -448,7 +448,7 @@
   // ---- boot ----
   rect(0,0,W,H,BG);
   drawHeader(); drawGraphFrame(); drawBpmTile(); drawCoachTile();
-  logMsg("pulse_cyd running: G2 @ 50Hz, BPM averaged over "+BPM_AVERAGE_N+" beats", false);
+  logMsg("PulseLink running: G2 @ 50Hz, BPM averaged over up to "+BPM_AVERAGE_N+" beats", false);
   requestAnimationFrame(frame);
 })();
 </script>
