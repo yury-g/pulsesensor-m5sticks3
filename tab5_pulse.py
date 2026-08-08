@@ -42,6 +42,7 @@ LINK_MAGIC = b"PS"
 PKT_LEN = 24                   # v3: 2 waveform samples + flags
 STALE_MS = 2500
 
+PKT_HZ_EXPECTED = 25           # link quality is measured against this
 APP_NAME = "PulseSensor.com"
 APP_SUB = "Tab5 remote display"
 
@@ -226,6 +227,62 @@ def draw_heart_area(s):
     lcd.fillRect(HEART_X - HEART_R - 3, 0, (HEART_R + 3) * 2, HDR_H - 3, BG)
     draw_heart(HEART_X, HEART_Y, r, RED if beat else RED_DIM)
 
+BATT_W = max(34, W // 32)
+BATT_H = max(16, HDR_H // 4)
+BATT_X = R - BATT_W - 4
+BATT_Y = 6
+SIG_W = 4
+SIG_GAP = 3
+SIG_BARS = 4
+SIG_X = BATT_X - 12 - (SIG_W + SIG_GAP) * SIG_BARS
+SIG_Y = BATT_Y
+
+def draw_signal(rate):
+    """Link-quality bars from the ACTUAL packet rate.
+
+    The AP interface exposes connected station MACs but no RSSI, so radio
+    signal strength is not available. Packet rate against the expected 25/s
+    is a real, honest measure of link health - not a guess at RSSI.
+    """
+    frac = 0.0 if rate <= 0 else min(1.0, rate / float(PKT_HZ_EXPECTED))
+    lit = int(frac * SIG_BARS + 0.5)
+    col = GREEN if frac >= 0.8 else (YELLOW if frac >= 0.4 else CYAN)
+    lcd.fillRect(SIG_X, SIG_Y, (SIG_W + SIG_GAP) * SIG_BARS, BATT_H, BG)
+    for i in range(SIG_BARS):
+        h = 5 + i * ((BATT_H - 5) // (SIG_BARS - 1))
+        lcd.fillRect(SIG_X + i * (SIG_W + SIG_GAP), SIG_Y + BATT_H - h,
+                     SIG_W, h, col if i < lit else GRID)
+
+def draw_battery(level, volts, charging):
+    """Level bar when the gauge reports one; an EXT pill when it does not.
+
+    Tab5 returned getBatteryLevel()=0 with 5482mV present, i.e. running from
+    the USB rail. Drawing an empty battery there would be a lie, so external
+    power gets its own explicit indicator.
+    """
+    lcd.fillRect(BATT_X - 2, BATT_Y - 2, BATT_W + 8, BATT_H + 4, BG)
+    if level and level > 0:
+        col = GREEN if level > 50 else (YELLOW if level > 20 else RED)
+        lcd.drawRect(BATT_X, BATT_Y, BATT_W, BATT_H, LABEL)
+        lcd.fillRect(BATT_X + BATT_W, BATT_Y + BATT_H // 3, 3, BATT_H // 3, LABEL)
+        fill = (min(100, level) * (BATT_W - 4)) // 100
+        if fill:
+            lcd.fillRect(BATT_X + 2, BATT_Y + 2, fill, BATT_H - 4,
+                         CYAN if charging else col)
+    else:
+        lcd.drawRect(BATT_X, BATT_Y, BATT_W, BATT_H, LABEL)
+        lcd.fillRect(BATT_X + BATT_W, BATT_Y + BATT_H // 3, 3, BATT_H // 3, LABEL)
+        f = fit("EXT", BATT_W - 6, BATT_H - 4, 4)
+        text_at(BATT_X + (BATT_W - tw("EXT", f)) // 2,
+                BATT_Y + (BATT_H - th(f)) // 2, "EXT", f, CYAN, BG)
+
+def read_power():
+    try:
+        return (M5.Power.getBatteryLevel(), M5.Power.getBatteryVoltage(),
+                bool(M5.Power.isCharging()))
+    except Exception:
+        return (0, 0, False)
+
 def draw_header(s, nlinked):
     lcd.fillRect(0, 0, W, HDR_H, BG)
     lcd.fillRect(0, HDR_H - 2, W, 2, FRAME)
@@ -238,10 +295,10 @@ def draw_header(s, nlinked):
         name = STATE_NAMES[s.state] if s.state < len(STATE_NAMES) else "?"
         col = GREEN if s.state == LOCKED_STATE else YELLOW
     f = fit(name, W // 3, HDR_H // 2, 2)
-    text_at(R - tw(name, f), HDR_H // 2 - th(f) - 2, name, f, col, BG)
+    text_at(SIG_X - 12 - tw(name, f), HDR_H // 2 - th(f) - 2, name, f, col, BG)
 
     tag = "%d LINKED" % nlinked if nlinked else "NO LINK"
-    text_at(R - tw(tag, F_TAG), HDR_H // 2 + 6, tag, F_TAG,
+    text_at(SIG_X - 12 - tw(tag, F_TAG), HDR_H // 2 + 6, tag, F_TAG,
             GREEN if nlinked else LABEL, BG)
     draw_heart_area(s)
 
@@ -420,7 +477,10 @@ def link_poll():
 # ============================== BOOT ==============================
 
 link_init()
+batt_level, batt_v, batt_chg = read_power()
 draw_header(None, 0)
+draw_signal(0)
+draw_battery(batt_level, batt_v, batt_chg)
 draw_graph_frame()
 draw_annotations(None)
 draw_tiles(None, True)
@@ -432,6 +492,12 @@ prev_resync = False
 last_hdr = time.ticks_ms()
 last_stat = time.ticks_ms()
 rx_count = 0
+rate_mark = time.ticks_ms()     # packet-rate window for the signal bars
+rate_base = 0
+pkt_rate = 0
+last_icons = 0
+batt_level = batt_v = 0
+batt_chg = False
 
 while True:
     now = time.ticks_ms()
@@ -481,12 +547,27 @@ while True:
         prev_resync = rs
     if time.ticks_diff(now, last_hdr) > 500:
         draw_header(None if stale else s, nlinked)
+        draw_signal(pkt_rate)
+        draw_battery(batt_level, batt_v, batt_chg)
         last_hdr = now
+
+    # measured packet rate over a 1s window -> signal bars
+    if time.ticks_diff(now, rate_mark) >= 1000:
+        pkt_rate = rx_count - rate_base
+        rate_base = rx_count
+        rate_mark = now
+        draw_signal(pkt_rate)
+
+    if time.ticks_diff(now, last_icons) >= 5000:
+        last_icons = now
+        batt_level, batt_v, batt_chg = read_power()
+        draw_battery(batt_level, batt_v, batt_chg)
 
     if time.ticks_diff(now, last_stat) >= 5000:
         last_stat = now
-        print("rx=%d linked=%d bpm=%s state=%s"
-              % (rx_count, nlinked,
-                 s.bpm if s else "-", s.state if s else "-"))
+        print("rx=%d rate=%d/s linked=%d bpm=%s state=%s batt=%s(%dmV)"
+              % (rx_count, pkt_rate, nlinked,
+                 s.bpm if s else "-", s.state if s else "-",
+                 batt_level, batt_v))
 
     time.sleep_ms(5)          # always yield: never starve the task watchdog
