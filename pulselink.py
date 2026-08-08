@@ -83,7 +83,12 @@ LINK_MAGIC = b"PS"
 LINK_VER = 3                   # v3: 2 waveform samples per packet, + flags
 LINK_SAMPLES = 2               # batch: full 50Hz detail at 25 packets/s
 LINK_EVERY = 2                 # send every Nth sample (50Hz/2 = 25 packets/s)
-LINK_RETRY_MS = 3000           # how often to retry joining, when not connected
+# Reconnect uses a bounded backoff rather than a fixed 3s wait: a fixed retry
+# was the single biggest avoidable delay when the stick booted before the Tab5
+# (measured 7.2s to first packet vs 2.1s when they start together).
+LINK_RETRY_MIN_MS = 300        # first retry, near-immediate
+LINK_RETRY_MAX_MS = 3000       # ceiling, so a missing AP does not spin
+LINK_SOCK_COOLDOWN_MS = 1000   # min gap between socket rebuilds
 
 RESYNC_LABEL_MS = 900          # how long the RESYNC confirmation shows
 RESYNC_FAST_MS = 6000          # fast-lock window after a resync
@@ -512,87 +517,138 @@ def read_status():
 
 _sock = None
 _wlan = None
-_link_seq = 0
 _link_up = False
 _link_next_try = 0
-_link_err = False
+_link_backoff = LINK_RETRY_MIN_MS
+_link_fatal = False            # wrong password etc: stop hammering, report once
+_last_status = None
+_sock_rebuilt_at = 0
 _sbuf = []
+
+def _log(msg):
+    """Timestamped link diagnostics - relative ms, so ordering is obvious."""
+    print("[%7d] LINK: %s" % (time.ticks_ms(), msg))
+
+def _make_socket():
+    """(Re)create the UDP socket. Returns True on success."""
+    global _sock, _sock_rebuilt_at
+    try:
+        import socket
+        if _sock is not None:
+            try:
+                _sock.close()
+            except Exception:
+                pass
+        _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _sock.setblocking(False)
+        _sock_rebuilt_at = time.ticks_ms()
+        return True
+    except Exception as ex:
+        _log("socket create failed (%s: %s)" % (type(ex).__name__, ex))
+        _sock = None
+        return False
 
 def link_init():
     """Bring up the radio and start joining the Tab5's AP. Never blocks.
 
-    Each step is guarded SEPARATELY. Previously one `w.connect()` raising
-    "Wifi Internal State Error" (which it does if the interface is already
-    connected, e.g. left over from a prior run) aborted the whole function
-    before the socket was ever created - so the link silently never existed.
+    Each step is guarded SEPARATELY. One w.connect() raising "Wifi Internal
+    State Error" (which it does when the interface is already connected, e.g.
+    left over from a previous run) once aborted this whole function before the
+    socket was created - the link then silently never existed.
     """
-    global _sock, _wlan
+    global _wlan, _link_next_try, _link_backoff
     if not LINK_ENABLED:
         return
     try:
-        import network, socket
+        import network
     except Exception as ex:
-        print("LINK: no network module (%s)" % ex)
+        _log("no network module (%s)" % ex)
         return
     try:
         _wlan = network.WLAN(network.STA_IF)
         if not _wlan.active():
             _wlan.active(True)
     except Exception as ex:
-        print("LINK: WLAN active failed (%s)" % ex)
+        _log("WLAN activate failed (%s)" % ex)
         _wlan = None
         return
-    try:
-        if not _wlan.isconnected():
-            _wlan.connect(LINK_SSID, LINK_PSK)
-    except Exception as ex:
-        # Not fatal: link_send() retries on its own schedule.
-        print("LINK: initial connect deferred (%s)" % ex)
-    try:
-        _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        _sock.setblocking(False)
-    except Exception as ex:
-        print("LINK: socket failed (%s)" % ex)
-        _sock = None
+    # Connect immediately; link_poll_connect() owns every retry from here.
+    _link_next_try = time.ticks_ms()
+    _link_backoff = LINK_RETRY_MIN_MS
+    _link_poll_connect(time.ticks_ms())
+    if _make_socket():
+        _log("'%s' -> udp %s:%d (status=%s)"
+             % (LINK_SSID, LINK_HOST, LINK_PORT, _wlan.status()))
+
+def _link_poll_connect(now_ms):
+    """Drive association from the WLAN status machine, not from exceptions."""
+    global _link_next_try, _link_backoff, _link_fatal, _last_status
+    if _wlan is None or _link_fatal:
         return
-    print("LINK: '%s' -> udp %s:%d (connected=%s)"
-          % (LINK_SSID, LINK_HOST, LINK_PORT, _wlan.isconnected()))
+    try:
+        st = _wlan.status()
+    except Exception:
+        return
+    if st != _last_status:
+        _last_status = st
+        _log("status %s" % st)
+    if st == 1001:                       # STAT_CONNECTING
+        return                           # never restart an in-flight attempt
+    if st in (202, 203, 204):            # wrong password / assoc / handshake
+        _link_fatal = True
+        _log("association rejected (status %s) - check SSID/PSK" % st)
+        return
+    if time.ticks_diff(now_ms, _link_next_try) < 0:
+        return
+    try:
+        _wlan.connect(LINK_SSID, LINK_PSK)
+    except Exception:
+        pass                             # already-connecting; status drives us
+    _link_next_try = time.ticks_add(now_ms, _link_backoff)
+    _link_backoff = min(LINK_RETRY_MAX_MS, _link_backoff * 2)
 
 def link_send():
-    """16-byte fixed packet. Non-blocking; any failure is ignored so the
-    display never stalls because of the radio."""
-    global _link_seq, _link_up, _link_next_try
-    if _sock is None or _wlan is None:
+    """One fixed-size packet per LINK_SAMPLES samples. Never blocks; a failed
+    send rebuilds the socket rather than being swallowed."""
+    global _link_up, _link_backoff, _link_next_try
+    if _wlan is None:
         return
-    # Buffer EVERY sample and send them batched. One point per packet made the
-    # Tab5 trace visibly angular (points ~10px apart on a 1240px window); this
-    # keeps the packet rate the same but doubles the drawn resolution.
+
+    # Buffer every sample so the Tab5 gets full 50Hz detail at 25 packets/s,
+    # but CAP it. Previously this appended and then returned at the connected
+    # check without clearing, so it grew at 50 entries/s for as long as the
+    # link was down.
     _sbuf.append(sig)
-    if len(_sbuf) < LINK_SAMPLES:
-        return
+    if len(_sbuf) > LINK_SAMPLES:
+        del _sbuf[0:len(_sbuf) - LINK_SAMPLES]
+
     now_ms = time.ticks_ms()
     if not _wlan.isconnected():
         if _link_up:
             _link_up = False
-            print("LINK: lost")
-        if time.ticks_diff(now_ms, _link_next_try) >= 0:
-            _link_next_try = time.ticks_add(now_ms, LINK_RETRY_MS)
-            try:
-                _wlan.connect(LINK_SSID, LINK_PSK)
-            except Exception:
-                pass          # already-connecting raises; harmless
+            _link_backoff = LINK_RETRY_MIN_MS    # reconnect fast after a drop
+            _link_next_try = now_ms
+            _log("lost")
+        _link_poll_connect(now_ms)
         return
+
     if not _link_up:
         _link_up = True
+        _link_backoff = LINK_RETRY_MIN_MS
         try:
-            print("LINK: up, ip=%s" % _wlan.ifconfig()[0])
+            _log("up, ip=%s" % _wlan.ifconfig()[0])
         except Exception:
-            print("LINK: up")
+            _log("up")
+        if _sock is None:
+            _make_socket()
+
+    if len(_sbuf) < LINK_SAMPLES or _sock is None:
+        return
+
     label, _ = coach()
     try:
-        s0 = _sbuf[0]
-        s1 = _sbuf[-1]
-        _sbuf.clear()
+        s0, s1 = _sbuf[0], _sbuf[-1]
+        del _sbuf[:]
         _a = min(1023, amp)
         _t = int(thresh) & 0x3FF
         _i = min(65535, ibi_ms)
@@ -604,7 +660,7 @@ def link_send():
                         STATE_CODES.get(label, 2),
                         (1 if beating() else 0)
                         | (2 if time.ticks_diff(resync_label_until,
-                                                time.ticks_ms()) > 0 else 0),
+                                                now_ms) > 0 else 0),
                         s0 >> 8, s0 & 0xFF,
                         s1 >> 8, s1 & 0xFF,
                         (smin >> 8) & 0xFF, smin & 0xFF,
@@ -614,14 +670,13 @@ def link_send():
                         _i >> 8, _i & 0xFF)))
         _sock.sendto(pkt, (LINK_HOST, LINK_PORT))
     except Exception as ex:
-        _sbuf.clear()
-        # Report the FIRST failure. A blanket "except: pass" here previously
-        # swallowed a NameError on every packet, so the link looked connected
-        # while sending nothing at all.
-        global _link_err
-        if not _link_err:
-            _link_err = True
-            print("LINK: send failed (%s: %s)" % (type(ex).__name__, ex))
+        del _sbuf[:]
+        # A confirmed send failure means the socket is suspect. Rebuild it,
+        # rate-limited, instead of silently failing forever.
+        if time.ticks_diff(now_ms, _sock_rebuilt_at) > LINK_SOCK_COOLDOWN_MS:
+            _log("send failed (%s: %s) - rebuilding socket"
+                 % (type(ex).__name__, ex))
+            _make_socket()
 
 try:
     import machine as _m

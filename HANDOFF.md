@@ -1,7 +1,32 @@
 # PulseLink Tab5 — implementation handoff
 
-Nothing was changed this session beyond creating this file. Repo is clean on
-`tab5-remote-display` at `11bccbc`. All work below is **approved** by Yury.
+All work below is **approved** by Yury. Branch `tab5-remote-display`.
+
+## STATUS
+
+- [x] **1. Merge + rename + purge CYD** — commit `9436ac8`, pushed.
+      `pulse_cyd.py`→`pulselink.py`, `tab5_pulse.py`→`pulselink_tab5.py`
+      (both git renames, history intact). Main's SPDX/MIT header and
+      PulseSensorPlayground attribution preserved AND the branch link layer.
+      All CYD naming gone from the tree. `stick.sh`, `provision.sh`,
+      `ROADMAP.md` deliberately kept. `.gitignore` rules restored so the
+      abandoned Arduino build trees are not committed.
+- [x] **2. Sender hardening** — code complete, deployed to the stick, boots
+      clean. Bounded `_sbuf` (caps at LINK_SAMPLES, no more 50/s growth while
+      offline). Bounded backoff 300ms→3s replacing the fixed 3s retry.
+      `_link_poll_connect()` drives association from **WLAN status**
+      (STAT_CONNECTING=1001 is never restarted; 202/203/204 are terminal and
+      reported once) instead of exceptions. Lost-link resets backoff for fast
+      reconnect. Confirmed send failure rebuilds the socket, rate-limited.
+      Timestamped `[ms] LINK:` diagnostics.
+      **NOT YET MEASURED** against the timing baseline — that is the next job.
+- [ ] **3. Tab5**: strict validation, waveform FIFO, capped renderer
+- [ ] **4. Deploy + verify both devices**
+- [ ] **5. Physical cold-power cycles + button tests** (needs Yury)
+- [ ] **6. docs/hackster text pack**
+
+Repo will eventually move to the World Famous Electronics org. Only the README
+clone command hardcodes `yury-g`.
 
 ## Approved plan (Approach 2)
 
