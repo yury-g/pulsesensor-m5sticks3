@@ -11,12 +11,22 @@ All work below is **approved** by Yury. Branch `tab5-remote-display`.
       deployed, verified receiving at 25/s with `bad=0`.
 - [x] **4. Deploy + verify both devices** — done for link behaviour and
       malformed-packet rejection paths. **Layout NOT visually confirmed.**
-- [ ] **5. Physical cold-power cycles + BtnA RESYNC / BtnB checks** (needs
-      Yury's hands — never done)
+- [~] **5. Physical hardware checks** — partly done 2026-08-08:
+      - [x] **Tab5 physical power cycle — PASSED.** Yury power-cycled the Tab5
+            while the stick was running. It came back up and **the stick
+            re-established the link on its own** (`rx` climbing, `linked=1`,
+            `rate=25/s`). This is the first *physical* confirmation of the
+            zombie-association fix from the previous session — that exact
+            scenario used to leave the stick in permanent `ENOMEM` with `rx=0`.
+      - [x] **Tab5 RESYNC banner render path** — exercised over the real link
+            with `tools/resync_probe.py`, no crash. Note this proves the
+            *receiver*, not the button.
+      - [ ] **BtnA RESYNC / BtnB on the stick** — still needs Yury's hands.
+      - [ ] **Stick physical power cycles** — still needs Yury's hands.
 - [ ] **6. `docs/hackster/` text pack** (only after hardware passes)
-- [x] **7. UI rework requested 2026-08-08** — implemented and deployed.
-      **Geometry verified numerically from the device's own boot log; the
-      screen itself still has not been looked at.**
+- [x] **7. UI rework requested 2026-08-08** — implemented, deployed, and
+      **visually signed off by Yury on 2026-08-08 ("it's much better")**.
+      Geometry also verified numerically from the device's own boot log.
 - [x] **8. `tools/malformed_probe.py` actually run** — see below.
 - [x] **9. Battery gauge de-glitched** — see below.
 
@@ -145,9 +155,10 @@ the sweep is inside the annotation band (`ANN_GX`) and forces a repaint. Any
 region-wiping function is now responsible for `forget()`-ing the fields it
 destroyed — `draw_graph_frame()` does this.
 
-**Not done: nobody has looked at the screen.** Everything above is arithmetic
-and serial output. "Does it look right, and is 104 px big enough" is Yury's
-call — that is the only open item on the UI.
+**Looked at and signed off** by Yury on 2026-08-08 — "it's much better". 104 px
+was judged big enough; if that ever changes, `VAL_MAX_W` is the binding
+constraint (248 px of 254 px used) and the vitals window would have to grow at
+SIG's expense before a larger face can be selected.
 
 ## FONT FACTS — measured on the Tab5, do not guess
 
@@ -203,8 +214,31 @@ call — that is the only open item on the UI.
   in each round *was* accepted and attributed to the probe's fake device id.
   No crash, no mis-parse. Redeploy `pulselink.py` to the stick afterwards — the
   probe leaves it sitting at the REPL.
+- `tools/resync_probe.py` — **written and run 2026-08-08.** Runs on the stick,
+  synthesises a valid v3 stream and drives state 7 / the resync flag on and off
+  so the Tab5's banner-up and banner-down transitions run over the real link.
+  Banner-down is the interesting one: it wipes the graph frame and takes the
+  `THR` / `LED BEAT` annotations with it, which is the repaint path the
+  change-driven rewrite touched. No crash, no leftover banner pixels.
+  **This proves the receiver, not the button** — BtnA still needs a human.
 - `tools/timeit.py` — dual-serial timing harness (see above). It is in the repo
   now; the older note calling it `scratchpad/timeit.py` was stale.
+
+## Reading the stat line
+
+```
+up=30s rx=690 bad=0 rate=26/s linked=1 bpm=127 state=4 \
+    batt=100%(8392mV) raw=0%(4362mV) free=23690672
+```
+
+- `up=` **resetting is the reboot signal.** The reset itself scrolls past
+  unseen in a passive log, and an `rx` counter that restarts is easy to
+  misread as a link fault. One reboot was chased this session before it turned
+  out to be Yury's own power cycle — `up=` makes that a one-glance answer.
+- `raw=` is the unfiltered battery gauge and is *expected* to flap; `batt=` is
+  the filtered value and should not.
+- `free=` is `gc.mem_free()`; ~23.7 MB steady on the P4. A downward trend
+  across minutes would be a leak.
 
 ## Traps that have already cost real time
 

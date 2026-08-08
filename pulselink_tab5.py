@@ -32,6 +32,7 @@
 
 import M5
 import time
+import gc
 
 # ============================== CONFIG ==============================
 
@@ -719,6 +720,7 @@ print("LAYOUT: coach face h=%d  longest w=%d  fits %d x %d" %
        COACH_MAX_W, COACH_MAX_H))
 
 prev_resync = False
+t_boot = time.ticks_ms()        # so the stat line can report uptime
 UI_MS = 50                      # text/meter refresh gate; see the main loop
 last_ui = time.ticks_ms()
 last_stat = time.ticks_ms()
@@ -815,10 +817,15 @@ while True:
         last_stat = now
         # batt shows filtered/raw so the de-glitching can be seen working
         # rather than assumed - raw is expected to flap, filtered is not.
-        print("rx=%d bad=%d rate=%d/s linked=%d bpm=%s state=%s "
-              "batt=%d%%(%dmV) raw=%d%%(%dmV)"
-              % (rx_count, rx_bad, pkt_rate, nlinked,
+        # up= and free= are here to make an unexplained reboot or a slow leak
+        # legible from a passive serial log: uptime resetting IS the reboot
+        # signal when the reset itself scrolls past unseen.
+        print("up=%ds rx=%d bad=%d rate=%d/s linked=%d bpm=%s state=%s "
+              "batt=%d%%(%dmV) raw=%d%%(%dmV) free=%d"
+              % (time.ticks_diff(now, t_boot) // 1000,
+                 rx_count, rx_bad, pkt_rate, nlinked,
                  s.bpm if s else "-", s.state if s else "-",
-                 batt_level, batt_v, batt_raw[0], batt_raw[1]))
+                 batt_level, batt_v, batt_raw[0], batt_raw[1],
+                 gc.mem_free()))
 
     time.sleep_ms(5)          # always yield: never starve the task watchdog
