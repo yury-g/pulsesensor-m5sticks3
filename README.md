@@ -8,7 +8,7 @@ and beat-synced BPM. No phone, cloud, router, breadboard, or second processor is
 required.
 
 - **Hackster build guide:**
-  [PulseLink: Watch Your Heartbeat Come Alive on M5Stack StickS3](https://www.hackster.io/YuryG_PulseSensor/pulselink-watch-your-heartbeat-come-alive-400fe5)
+  [PulseLink: Watch Your Heartbeat on M5Stack StickS3](https://www.hackster.io/YuryG_PulseSensor/pulselink-watch-your-heartbeat-on-m5stack-sticks3-400fe5)
 - **M5Stack controller:**
   [StickS3 documentation](https://docs.m5stack.com/en/core/StickS3)
 - **Sensor:**
