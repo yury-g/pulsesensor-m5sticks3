@@ -41,6 +41,7 @@ LINK_SSID = "PulseSensor-Link"
 LINK_PSK = "pulse1234"
 LINK_PORT = 5005
 LINK_MAGIC = b"PS"
+LINK_VER = 3                   # protocol version; anything else is rejected
 PKT_LEN = 24                   # v3: 2 waveform samples + flags
 STALE_MS = 2500
 
@@ -69,6 +70,83 @@ LOCKED_STATE = 6
 # ============================== SETUP ==============================
 
 M5.begin()
+
+# ============================== LINK ==============================
+# The AP comes up FIRST, before any drawing. Measuring the boot showed the
+# layout pass below spends ~3.4s loading and measuring the vector fonts, and
+# every second of that was a second the stick sat retrying against an AP that
+# did not exist yet. Nothing here touches the LCD, so it is safe this early.
+
+_sock = None
+_ap = None
+rx_bad = 0                     # packets rejected by parse(), for verification
+
+def link_init():
+    global _sock, _ap
+    try:
+        import network, socket
+        _ap = network.WLAN(network.AP_IF)
+        _ap.active(True)
+        try:
+            _ap.config(essid=LINK_SSID, password=LINK_PSK, authmode=3)
+        except Exception:
+            try:
+                _ap.config(essid=LINK_SSID, password=LINK_PSK)
+            except Exception:
+                _ap.config(essid=LINK_SSID)
+        _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _sock.bind(("0.0.0.0", LINK_PORT))
+        _sock.setblocking(False)
+        try:
+            ip = _ap.ifconfig()[0]
+        except Exception:
+            ip = "?"
+        print("LINK: SoftAP '%s' at %s, udp %d" % (LINK_SSID, ip, LINK_PORT))
+        return True
+    except Exception as ex:
+        print("LINK: failed (%s)" % ex)
+        return False
+
+def parse(d):
+    """Strictly validate before trusting a single byte of the payload.
+
+    EXACT length and an explicit version check - a short packet would index
+    past the end, an over-long one is not a v3 packet at all, and a future
+    version would be silently misread field-for-field.
+    """
+    if len(d) != PKT_LEN or d[0:2] != LINK_MAGIC or d[2] != LINK_VER:
+        return None
+    def u16(i):
+        return (d[i] << 8) | d[i + 1]
+    return {"dev": bytes(d[3:6]), "bpm": d[6], "quality": d[7], "state": d[8],
+            "beat": bool(d[9] & 1), "resync": bool(d[9] & 2),
+            "samples": (u16(10), u16(12)),
+            "smin": u16(14), "smax": u16(16), "thresh": u16(18),
+            "amp": u16(20), "ibi": u16(22)}
+
+def link_poll():
+    global rx_bad
+    out = []
+    if _sock is None:
+        return out
+    for _ in range(16):
+        try:
+            data, _addr = _sock.recvfrom(64)
+        except Exception:
+            break
+        if not data:
+            break
+        p = parse(data)
+        if p:
+            out.append(p)
+        else:
+            rx_bad += 1
+    return out
+
+link_init()
+
+# ============================== DISPLAY ==============================
+
 lcd = M5.Lcd
 try:                                   # 720x1280 at rot 0, 1280x720 at rot 1
     lcd.setRotation(1)
@@ -90,35 +168,103 @@ def mapv(v, a, b, c, d):
 # blurry at the sizes this screen needs. Use the real vector fonts instead and
 # keep textSize at 1 - they render at native resolution and stay crisp.
 _F = lcd.FONTS
-FONT_STACK = (_F.DejaVu72, _F.DejaVu56, _F.DejaVu40, _F.DejaVu24,
-              _F.DejaVu18, _F.DejaVu12, _F.DejaVu9)
+# A "face" is (font, integer_scale). The font NAMES ARE NOT PIXEL HEIGHTS -
+# measured on this panel: DejaVu72 is 52px tall, DejaVu56 49px, DejaVu40 44px,
+# DejaVu9 15px. 52px is the largest real glyph in the build, which is far too
+# small for a headline number on a 720px screen. So the big readouts scale the
+# largest face: 2x gives 104px, readable across a room. Scaling is chunky at
+# the edges, but a crisp number nobody can read from the couch is worse.
+FACE_STACK = ((_F.DejaVu72, 3), (_F.DejaVu72, 2),
+              (_F.DejaVu72, 1), (_F.DejaVu56, 1), (_F.DejaVu40, 1),
+              (_F.DejaVu24, 1), (_F.DejaVu18, 1), (_F.DejaVu12, 1),
+              (_F.DejaVu9, 1))
 
-def use_font(f):
-    lcd.setFont(f)
-    lcd.setTextSize(1)
+def use_face(face):
+    lcd.setFont(face[0])
+    lcd.setTextSize(face[1])
 
 def tw(s, f=None):
     if f is not None:
-        use_font(f)
+        use_face(f)
     return lcd.textWidth(s)
 
 def th(f=None):
     if f is not None:
-        use_font(f)
+        use_face(f)
     return lcd.fontHeight()
 
 def text_at(x, y, s, f, fg, bg):
-    use_font(f)
+    use_face(f)
     lcd.setTextColor(fg, bg)
     lcd.setCursor(int(x), int(y))
     lcd.print(s)
 
 def fit(s, max_w, max_h, start_idx=0):
-    """Biggest real font that fits the box. Never assume character cells."""
-    for f in FONT_STACK[start_idx:]:
+    """Biggest face that fits the box. Never assume character cells."""
+    for f in FACE_STACK[start_idx:]:
         if tw(s, f) <= max_w and th(f) <= max_h:
             return f
-    return FONT_STACK[-1]
+    return FACE_STACK[-1]
+
+# --------------------- flicker-free dynamic painting ---------------------
+# The old dashboard repainted whole regions on a timer: draw_header() blanked
+# the full header bar and redrew it twice a second whether or not anything had
+# changed, and every tile update refilled the entire tile. That full-rect
+# erase-then-redraw is exactly what the eye sees as flicker.
+#
+# Instead: paint static chrome ONCE, then repaint a value only when it really
+# changed, and let lcd.print()'s opaque background box overwrite the glyphs in
+# place. Only a string that SHRANK needs erasing, and only the strip it no
+# longer covers.
+
+_fields = {}                   # key -> last painted (x, y, w, h)
+_shown = {}                    # key -> last painted value
+
+def changed(key, val):
+    """True (and remembers val) only when this field actually needs redrawing."""
+    if _shown.get(key) == val:
+        return False
+    _shown[key] = val
+    return True
+
+def forget(*keys):
+    """Drop cached state for regions that were wiped by a full repaint."""
+    for k in keys:
+        _shown.pop(k, None)
+        _fields.pop(k, None)
+
+def _clear_outside(old, new, bg):
+    """Erase only the part of the previous paint the new one does not cover."""
+    ox, oy, ow, oh = old
+    nx, ny, nw, nh = new
+    if ow <= 0 or oh <= 0:
+        return
+    if ox < nx:
+        lcd.fillRect(ox, oy, min(ow, nx - ox), oh, bg)
+    if ox + ow > nx + nw:
+        lcd.fillRect(nx + nw, oy, (ox + ow) - (nx + nw), oh, bg)
+    x0, x1 = max(ox, nx), min(ox + ow, nx + nw)
+    if x1 > x0:
+        if oy < ny:
+            lcd.fillRect(x0, oy, x1 - x0, min(oh, ny - oy), bg)
+        if oy + oh > ny + nh:
+            lcd.fillRect(x0, ny + nh, x1 - x0, (oy + oh) - (ny + nh), bg)
+
+def field(key, x, y, s, face, fg, bg=BG, right=None):
+    """Paint a dynamic text field in place, with no erase-flash."""
+    use_face(face)
+    w, h = lcd.textWidth(s), lcd.fontHeight()
+    if right is not None:
+        x = right - w
+    x, y = int(x), int(y)
+    lcd.setTextColor(fg, bg)
+    lcd.setCursor(x, y)
+    lcd.print(s)
+    old = _fields.get(key)
+    new = (x, y, w, h)
+    if old:
+        _clear_outside(old, new, bg)
+    _fields[key] = new
 
 def rrect(x, y, w, h, r, col, filled=False):
     """Rounded panel, with a plain-rect fallback if the build lacks it."""
@@ -140,18 +286,19 @@ SAFE = max(10, W // 64)
 L, R = SAFE, W - SAFE
 
 HDR_H = max(70, H // 8)
-F_TITLE = fit(APP_NAME, W // 3, HDR_H // 2)
-F_SUB = fit(APP_SUB, W // 3, HDR_H // 3, 3)
-F_STATUS = fit("QUALIFIED BEAT", W // 3, HDR_H // 2, 2)
-F_TAG = fit("WAITING FOR STICK", W // 3, HDR_H // 3, 4)
-F_TILE_LBL = fit("BPM", 200, 60, 3)
-F_ANNOT = fit("LED BEAT", 260, 50, 3)
+F_TITLE = fit(APP_NAME, W // 3, HDR_H // 2, 2)
+F_SUB = fit(APP_SUB, W // 3, HDR_H // 3, 5)
+F_STATUS = fit("QUALIFIED BEAT", W // 3, HDR_H // 2, 4)
+F_TAG = fit("WAITING FOR STICK", W // 3, HDR_H // 3, 6)
+F_TILE_LBL = fit("BPM", 200, 60, 5)
+F_ANNOT = fit("LED BEAT", 260, 50, 5)
 
 HEART_R = max(18, HDR_H // 3)
 HEART_X = W // 2
 HEART_Y = HDR_H // 2
 
-TILE_H = max(120, H // 5)                  # bottom readouts
+TILE_H = max(150, H // 4)                  # bottom readouts; tall enough
+                                           # that BPM/IBI reach the 104px face
 TILE_Y = H - SAFE - TILE_H
 TILE_GAP = SAFE
 _avail = R - L - 2 * TILE_GAP
@@ -176,11 +323,19 @@ PTS_PER_PKT = 2                            # stick batches 2 samples per packet
 WAVE_SAMPLES = WAVE_SECONDS * PKT_HZ * PTS_PER_PKT
 X_STEP = max(1, GW // WAVE_SAMPLES)        # ~5px: smooth, not angular
 
+# Packets arrive faster than the panel can usefully be repainted, and several
+# can land in a single poll. Queue their samples and drain the queue on a
+# capped cadence, so no sample is silently dropped the way it was when the
+# loop overwrote a 2-sample tuple per packet and drew once.
+WAVE_FIFO_MAX = WAVE_SAMPLES               # one screenful; older is off-screen
+RENDER_MS = 33                             # cap waveform repaints at ~30/s
+MAX_PER_FRAME = 16                         # bound the work inside one frame
+
 # ============================== STATE ==============================
 
 class Stick:
     __slots__ = ("dev", "bpm", "ibi", "quality", "state", "beat", "resync",
-                 "sig", "samples", "smin", "smax", "thresh", "amp", "last")
+                 "sig", "wave", "smin", "smax", "thresh", "amp", "last")
 
     def __init__(self, dev):
         self.dev = dev
@@ -189,7 +344,7 @@ class Stick:
         self.beat = False
         self.resync = False
         self.sig = 512
-        self.samples = (512, 512)
+        self.wave = []                      # (sample, beat_edge) pending draw
         self.smin, self.smax = 0, 1023
         self.thresh = 550
         self.last = time.ticks_ms()
@@ -274,7 +429,7 @@ def draw_battery(level, volts, charging):
     else:
         lcd.drawRect(BATT_X, BATT_Y, BATT_W, BATT_H, LABEL)
         lcd.fillRect(BATT_X + BATT_W, BATT_Y + BATT_H // 3, 3, BATT_H // 3, LABEL)
-        f = fit("EXT", BATT_W - 6, BATT_H - 4, 4)
+        f = fit("EXT", BATT_W - 6, BATT_H - 4, 6)
         text_at(BATT_X + (BATT_W - tw("EXT", f)) // 2,
                 BATT_Y + (BATT_H - th(f)) // 2, "EXT", f, CYAN, BG)
 
@@ -296,7 +451,7 @@ def draw_header(s, nlinked):
     else:
         name = STATE_NAMES[s.state] if s.state < len(STATE_NAMES) else "?"
         col = GREEN if s.state == LOCKED_STATE else YELLOW
-    f = fit(name, W // 3, HDR_H // 2, 2)
+    f = fit(name, W // 3, HDR_H // 2, 4)
     text_at(SIG_X - 12 - tw(name, f), HDR_H // 2 - th(f) - 2, name, f, col, BG)
 
     tag = "%d LINKED" % nlinked if nlinked else "NO LINK"
@@ -352,14 +507,19 @@ def clear_column(cx, s):
     if cx % 8 < 4:                          # dotted threshold line
         lcd.drawPixel(x, thresh_y(s), DOT)
 
-def draw_wave(s):
-    """Draw every sample in the batch, so the trace stays smooth."""
+def draw_wave(s, batch):
+    """Draw every queued sample as a connected trace, so nothing is dropped.
+
+    `batch` is a list of (sample, beat_edge) drained from the stick's FIFO.
+    The trace stays connected across calls via last_gy, exactly as when this
+    drew a single packet at a time.
+    """
     global gx, last_gy
     lo, hi = s.smin, s.smax
     if hi <= lo:
         hi = lo + 1
     col = wave_color(s)
-    for sample in s.samples:
+    for sample, beat in batch:
         y = clamp(mapv(sample, lo, hi, GY + GH - 6, GY + 6),
                   GY + 6, GY + GH - 6)
         for k in range(X_STEP * 2):             # erase the span ahead
@@ -369,7 +529,7 @@ def draw_wave(s):
             lcd.drawLine(x0, last_gy, x1, y, col)
             lcd.drawLine(x0, last_gy + 1, x1, y + 1, col)
             lcd.drawLine(x0, last_gy - 1, x1, y - 1, col)
-        if s.beat:
+        if beat:
             for yy in range(GY + 4, GY + GH - 4, 6):
                 lcd.drawPixel(GX + gx, yy, YELLOW)
         last_gy = y
@@ -392,7 +552,7 @@ def draw_tile(i, label, value, unit, col, meter=None, flash=False):
         vy = TILE_Y + TILE_H - th(vf) - 10
         text_at(x + 18, vy, value, vf, col, bg)
         if unit:
-            uf = fit(unit, 120, 40, 4)
+            uf = fit(unit, 120, 40, 6)
             text_at(x + 18 + tw(value, vf) + 10,
                     vy + th(vf) - th(uf) - 6, unit, uf,
                     BG if flash else LABEL, bg)
@@ -418,67 +578,8 @@ def draw_tiles(s, stale):
     rng = clamp(s.smax - s.smin, 0, 600)
     draw_tile(2, "SIG", "", "", col, meter=rng * 100 // 600)
 
-# ============================== LINK ==============================
-
-_sock = None
-_ap = None
-
-def link_init():
-    global _sock, _ap
-    try:
-        import network, socket
-        _ap = network.WLAN(network.AP_IF)
-        _ap.active(True)
-        try:
-            _ap.config(essid=LINK_SSID, password=LINK_PSK, authmode=3)
-        except Exception:
-            try:
-                _ap.config(essid=LINK_SSID, password=LINK_PSK)
-            except Exception:
-                _ap.config(essid=LINK_SSID)
-        _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        _sock.bind(("0.0.0.0", LINK_PORT))
-        _sock.setblocking(False)
-        try:
-            ip = _ap.ifconfig()[0]
-        except Exception:
-            ip = "?"
-        print("LINK: SoftAP '%s' at %s, udp %d" % (LINK_SSID, ip, LINK_PORT))
-        return True
-    except Exception as ex:
-        print("LINK: failed (%s)" % ex)
-        return False
-
-def parse(d):
-    if len(d) < PKT_LEN or d[0:2] != LINK_MAGIC:
-        return None
-    def u16(i):
-        return (d[i] << 8) | d[i + 1]
-    return {"dev": bytes(d[3:6]), "bpm": d[6], "quality": d[7], "state": d[8],
-            "beat": bool(d[9] & 1), "resync": bool(d[9] & 2),
-            "samples": (u16(10), u16(12)),
-            "smin": u16(14), "smax": u16(16), "thresh": u16(18),
-            "amp": u16(20), "ibi": u16(22)}
-
-def link_poll():
-    out = []
-    if _sock is None:
-        return out
-    for _ in range(16):
-        try:
-            data, _addr = _sock.recvfrom(64)
-        except Exception:
-            break
-        if not data:
-            break
-        p = parse(data)
-        if p:
-            out.append(p)
-    return out
-
 # ============================== BOOT ==============================
 
-link_init()
 batt_level, batt_v, batt_chg = read_power()
 draw_header(None, 0)
 draw_signal(0)
@@ -493,6 +594,7 @@ prev_beat = False
 prev_resync = False
 last_hdr = time.ticks_ms()
 last_stat = time.ticks_ms()
+last_wave = time.ticks_ms()
 rx_count = 0
 rate_mark = time.ticks_ms()     # packet-rate window for the signal bars
 rate_base = 0
@@ -504,19 +606,23 @@ batt_chg = False
 while True:
     now = time.ticks_ms()
 
-    got = False
     for p in link_poll():
         rx_count += 1
         s = stick_for(p["dev"])
         s.bpm = p["bpm"]; s.ibi = p["ibi"]; s.quality = p["quality"]
         s.state = p["state"]; s.beat = p["beat"]
-        s.samples = p["samples"]; s.sig = p["samples"][-1]
+        sm = p["samples"]
+        s.sig = sm[-1]
+        # Queue rather than overwrite. The beat edge is marked once per packet
+        # instead of on every sample, so one beat draws one marker.
+        s.wave.append((sm[0], p["beat"]))
+        s.wave.append((sm[1], False))
+        if len(s.wave) > WAVE_FIFO_MAX:
+            del s.wave[0:len(s.wave) - WAVE_FIFO_MAX]
         s.resync = p["resync"]
         s.smin = p["smin"]; s.smax = p["smax"]
         s.thresh = p["thresh"]; s.amp = p["amp"]
         s.last = now
-        if s is primary:
-            got = True
 
     s = primary
     stale = (s is None) or time.ticks_diff(now, s.last) > STALE_MS
@@ -525,8 +631,19 @@ while True:
         if time.ticks_diff(now, x.last) <= STALE_MS:
             nlinked += 1
 
-    if got and not stale:
-        draw_wave(s)
+    # Drain the waveform FIFO on a capped cadence rather than once per packet.
+    if s is not None and time.ticks_diff(now, last_wave) >= RENDER_MS:
+        last_wave = now
+        if stale:
+            del s.wave[:]                    # nothing live to draw
+        elif s.wave:
+            if len(s.wave) > MAX_PER_FRAME:
+                # Renderer is behind the link. Drop the oldest so the trace
+                # stays live instead of lagging further behind every frame.
+                del s.wave[0:len(s.wave) - MAX_PER_FRAME]
+            batch = s.wave[:]
+            del s.wave[:]
+            draw_wave(s, batch)
 
     # change-driven: only repaint what actually changed
     cur = None if stale else (s.bpm, s.ibi, s.state, s.smax - s.smin)
@@ -567,8 +684,8 @@ while True:
 
     if time.ticks_diff(now, last_stat) >= 5000:
         last_stat = now
-        print("rx=%d rate=%d/s linked=%d bpm=%s state=%s batt=%s(%dmV)"
-              % (rx_count, pkt_rate, nlinked,
+        print("rx=%d bad=%d rate=%d/s linked=%d bpm=%s state=%s batt=%s(%dmV)"
+              % (rx_count, rx_bad, pkt_rate, nlinked,
                  s.bpm if s else "-", s.state if s else "-",
                  batt_level, batt_v))
 

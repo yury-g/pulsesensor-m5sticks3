@@ -1,4 +1,32 @@
-# PulseSensor on M5StickS3 — parked work
+# PulseSensor on M5StickS3 — roadmap
+
+## Public roadmap — planned for PulseLink / Tab5
+
+Requested 2026-08-08. Not started; listed in priority order as given.
+
+1. **Auto-rotate.** The Tab5 senses its own physical orientation and always
+   presents the screen upright, never upside down.
+2. **Wireless icon → developer dashboard.** Click through the link/signal icon
+   to a detailed screen with everything a developer or DIY user wants: packet
+   rate, per-stick MACs, dropped/rejected counts, RSSI if it ever becomes
+   available, protocol version, uptime.
+3. **Battery icon → power-management dashboard.** Full power screen with the
+   most-requested features for a device like this: state of charge, estimated
+   runtime remaining, charge/discharge rate, cell voltage. Use graphs and
+   gauges for anything that changes often.
+4. **Multiple sensors.** Support 2–4 PulseSensors across multiple StickS3s in
+   any combination. Show BPM and IBI for a sensor together in one window.
+5. **App menu.** A menu to reach more apps on the device.
+6. **FFT spectrum analyzer.** An app running FFT over the live PPG data,
+   labelling repeating harmonics and marking time in times/second.
+7. **Room to grow.** Make space to port more projects onto the device, so the
+   PulseSensor(s) plug into a wider PPG ecosystem.
+8. **Consider a ground-up rewrite** once the current build has survived a week
+   of real user testing.
+
+---
+
+# Parked work
 
 Two features were built, verified on hardware, then deliberately removed from the
 shipping app (`pulselink.py`) on 2026-07-16. Everything needed to reinstate them is

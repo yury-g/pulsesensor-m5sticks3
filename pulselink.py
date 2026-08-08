@@ -87,8 +87,19 @@ LINK_EVERY = 2                 # send every Nth sample (50Hz/2 = 25 packets/s)
 # was the single biggest avoidable delay when the stick booted before the Tab5
 # (measured 7.2s to first packet vs 2.1s when they start together).
 LINK_RETRY_MIN_MS = 300        # first retry, near-immediate
-LINK_RETRY_MAX_MS = 3000       # ceiling, so a missing AP does not spin
+# Ceiling, so a missing AP does not spin. Measured why 1s and not 3s: the AP
+# appearing mid-backoff is dead time, and association itself then costs a
+# further ~1.8s of radio. With a 3s ceiling the stick sat idle up to 3s after
+# the Tab5's AP was already up (observed 1.5s idle + 1.84s assoc = 3.36s).
+# A connect attempt is cheap - the driver scans in the background - so 1s
+# retries are ~1 attempt/sec, not a hot spin.
+LINK_RETRY_MAX_MS = 1000
 LINK_SOCK_COOLDOWN_MS = 1000   # min gap between socket rebuilds
+# When the Tab5 reboots, its SoftAP vanishes without deauthenticating anyone.
+# The stick's STA keeps reporting isconnected()=True and every sendto() then
+# fails with ENOMEM - forever, because the socket is not what is broken. After
+# this long of solid send failures, drop the association and rejoin.
+LINK_ZOMBIE_MS = 2000
 
 RESYNC_LABEL_MS = 900          # how long the RESYNC confirmation shows
 RESYNC_FAST_MS = 6000          # fast-lock window after a resync
@@ -520,9 +531,10 @@ _wlan = None
 _link_up = False
 _link_next_try = 0
 _link_backoff = LINK_RETRY_MIN_MS
-_link_fatal = False            # wrong password etc: stop hammering, report once
 _last_status = None
 _sock_rebuilt_at = 0
+_send_fail_since = 0           # ticks_ms of the first of the current run of
+                               # send failures; 0 when sends are working
 _sbuf = []
 
 def _log(msg):
@@ -582,8 +594,8 @@ def link_init():
 
 def _link_poll_connect(now_ms):
     """Drive association from the WLAN status machine, not from exceptions."""
-    global _link_next_try, _link_backoff, _link_fatal, _last_status
-    if _wlan is None or _link_fatal:
+    global _link_next_try, _link_backoff, _last_status
+    if _wlan is None:
         return
     try:
         st = _wlan.status()
@@ -594,23 +606,26 @@ def _link_poll_connect(now_ms):
         _log("status %s" % st)
     if st == 1001:                       # STAT_CONNECTING
         return                           # never restart an in-flight attempt
-    if st in (202, 203, 204):            # wrong password / assoc / handshake
-        _link_fatal = True
-        _log("association rejected (status %s) - check SSID/PSK" % st)
-        return
+    # 202/203/204 (assoc/handshake refused) are NOT terminal. The Tab5's AP
+    # refuses associations for a moment right after it starts, and latching
+    # that as fatal left the link dead for the whole session - measured: the
+    # only reason it ever came back was the IDF driver's own internal retry.
+    # Retry on the normal backoff; a genuinely wrong PSK just retries at the
+    # 3s ceiling, which is cheap. The status-change log above reports it once.
     if time.ticks_diff(now_ms, _link_next_try) < 0:
         return
     try:
         _wlan.connect(LINK_SSID, LINK_PSK)
     except Exception:
         pass                             # already-connecting; status drives us
+    _log("connect attempt (next in %dms)" % _link_backoff)
     _link_next_try = time.ticks_add(now_ms, _link_backoff)
     _link_backoff = min(LINK_RETRY_MAX_MS, _link_backoff * 2)
 
 def link_send():
     """One fixed-size packet per LINK_SAMPLES samples. Never blocks; a failed
     send rebuilds the socket rather than being swallowed."""
-    global _link_up, _link_backoff, _link_next_try
+    global _link_up, _link_backoff, _link_next_try, _send_fail_since
     if _wlan is None:
         return
 
@@ -669,14 +684,33 @@ def link_send():
                         _a >> 8, _a & 0xFF,
                         _i >> 8, _i & 0xFF)))
         _sock.sendto(pkt, (LINK_HOST, LINK_PORT))
+        _send_fail_since = 0
     except Exception as ex:
         del _sbuf[:]
+        if _send_fail_since == 0:
+            _send_fail_since = now_ms
         # A confirmed send failure means the socket is suspect. Rebuild it,
         # rate-limited, instead of silently failing forever.
         if time.ticks_diff(now_ms, _sock_rebuilt_at) > LINK_SOCK_COOLDOWN_MS:
             _log("send failed (%s: %s) - rebuilding socket"
                  % (type(ex).__name__, ex))
             _make_socket()
+        # Sends still failing after a rebuild means the ASSOCIATION is dead,
+        # not the socket - the AP went away without deauthenticating us, so
+        # isconnected() lies and every sendto() returns ENOMEM. Measured: the
+        # stick never recovered on its own across a Tab5 reboot. Force a
+        # rejoin; link_poll_connect() takes it from there.
+        elif time.ticks_diff(now_ms, _send_fail_since) > LINK_ZOMBIE_MS:
+            _log("sends failing %dms while 'connected' - forcing rejoin"
+                 % time.ticks_diff(now_ms, _send_fail_since))
+            _send_fail_since = 0
+            _link_up = False
+            _link_backoff = LINK_RETRY_MIN_MS
+            _link_next_try = now_ms
+            try:
+                _wlan.disconnect()
+            except Exception:
+                pass
 
 try:
     import machine as _m
