@@ -3,6 +3,7 @@
 #   stick.sh status              what's connected, what's it running
 #   stick.sh run <file.py>       run script now (RAM, ~1s, not persistent)
 #   stick.sh deploy <file.py>    make script the boot program (persists)
+#   stick.sh reset               reboot the board, leave it running
 #   stick.sh watch [secs]        stream serial output (default 8s)
 #   stick.sh flash <image.bin>   full firmware flash (rarely needed)
 set -u
@@ -42,6 +43,21 @@ s.write(b'\x03\x03'); time.sleep(0.4); s.close()
 EOF
 }
 
+# Reset over raw serial rather than `mpremote exec machine.reset()`. mpremote
+# waits for the exec to return, and a board that immediately starts spewing
+# serial never lets it - on the Tab5 that looked exactly like a 45s hang, and
+# the only cure was pkill. Writing the reset and closing the port does the same
+# job and returns at once.
+hard_reset() {
+  /usr/bin/python3 - "$PORT" <<'EOF'
+import serial, sys, time
+s = serial.Serial(sys.argv[1], 115200, timeout=1)
+s.write(b'\x03\x03'); time.sleep(0.3)
+s.write(b'import machine; machine.reset()\r\n'); time.sleep(0.3)
+s.close()
+EOF
+}
+
 case "$CMD" in
   status)
     interrupt
@@ -59,7 +75,12 @@ print('files:', os.listdir('/flash') if 'flash' in os.listdir('/') else os.listd
   deploy)
     interrupt
     /usr/bin/python3 -m mpremote connect "$PORT" resume fs cp "$2" :main.py && echo "DEPLOYED: $2 -> boots at every power-on"
-    /usr/bin/python3 -m mpremote connect "$PORT" resume exec "import machine; machine.reset()" 2>/dev/null || true
+    hard_reset
+    echo "RESET: booting $2 now — read it passively with 'stick.sh watch'"
+    ;;
+  reset)
+    hard_reset
+    echo "RESET: $PORT"
     ;;
   watch)
     /usr/bin/python3 - "$PORT" "${2:-8}" <<'EOF'
@@ -76,5 +97,5 @@ EOF
     "$DIR/flash.sh" "$2" "$PORT"
     ;;
   *)
-    echo "usage: stick.sh {status|run|deploy|watch|flash}"; exit 1;;
+    echo "usage: stick.sh {status|run|deploy|reset|watch|flash}"; exit 1;;
 esac

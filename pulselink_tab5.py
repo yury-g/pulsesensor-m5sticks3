@@ -6,15 +6,17 @@
 # A remote display for M5StickS3 sensors running PulseLink, scaled to 1280x720:
 #
 #   +--------------------------------------------------------------+
-#   | PulseSensor.com        <3        QUALIFIED BEAT      1 LINKED |
-#   | Tab5 remote display                                           |
+#   | PulseSensor.com              <3               .ill [=]        |
+#   | Tab5 remote display                          2 LINKED         |
 #   +--------------------------------------------------------------+
 #   |                                              THR 550          |
 #   |        live waveform, dotted threshold line                   |
 #   |                                              LED BEAT         |
-#   +--------------------------------------------------------------+
-#   |   BPM 121   |   IBI 550 ms   |   SIG  ||||||||||              |
-#   +--------------------------------------------------------------+
+#   +----------------------------+---------------------------------+
+#   | BPM       | IBI ms         | SIG                             |
+#   |   121     |   550          |   QUALIFIED BEAT                |
+#   |           |                |   ||||||||||||                  |
+#   +----------------------------+---------------------------------+
 #
 # Display semantics, kept in step with the StickS3 app:
 #   * waveform is YELLOW while acquiring, GREEN once the quality meter locks
@@ -250,12 +252,14 @@ def _clear_outside(old, new, bg):
         if oy + oh > ny + nh:
             lcd.fillRect(x0, ny + nh, x1 - x0, (oy + oh) - (ny + nh), bg)
 
-def field(key, x, y, s, face, fg, bg=BG, right=None):
+def field(key, x, y, s, face, fg, bg=BG, right=None, center=None):
     """Paint a dynamic text field in place, with no erase-flash."""
     use_face(face)
     w, h = lcd.textWidth(s), lcd.fontHeight()
     if right is not None:
         x = right - w
+    elif center is not None:
+        x = center - w // 2
     x, y = int(x), int(y)
     lcd.setTextColor(fg, bg)
     lcd.setCursor(x, y)
@@ -288,24 +292,80 @@ L, R = SAFE, W - SAFE
 HDR_H = max(70, H // 8)
 F_TITLE = fit(APP_NAME, W // 3, HDR_H // 2, 2)
 F_SUB = fit(APP_SUB, W // 3, HDR_H // 3, 5)
-F_STATUS = fit("QUALIFIED BEAT", W // 3, HDR_H // 2, 4)
-F_TAG = fit("WAITING FOR STICK", W // 3, HDR_H // 3, 6)
+F_TAG = fit("88 LINKED", W // 4, HDR_H // 2, 2)
 F_TILE_LBL = fit("BPM", 200, 60, 5)
 F_ANNOT = fit("LED BEAT", 260, 50, 5)
+
+# Title block centred in the bar rather than hung off HDR_H//2: with a 44px
+# title in a 90px bar the old arithmetic put the first line at y = -1.
+TITLE_Y = max(2, (HDR_H - 2 - (th(F_TITLE) + 4 + th(F_SUB))) // 2)
+SUB_Y = TITLE_Y + th(F_TITLE) + 4
 
 HEART_R = max(18, HDR_H // 3)
 HEART_X = W // 2
 HEART_Y = HDR_H // 2
 
-TILE_H = max(150, H // 4)                  # bottom readouts; tall enough
-                                           # that BPM/IBI reach the 104px face
-TILE_Y = H - SAFE - TILE_H
+# Header right cluster: battery + link bars on top, the LINKED tag underneath.
+# The coach text used to sit here too; it now lives in the SIG panel, which
+# leaves room for a much bigger tag.
+BATT_W = max(34, W // 32)
+BATT_H = max(16, HDR_H // 4)
+BATT_X = R - BATT_W - 4
+BATT_Y = 6
+BAR_W = 4
+BAR_GAP = 3
+BARS = 4
+BARS_X = BATT_X - 12 - (BAR_W + BAR_GAP) * BARS
+BARS_Y = BATT_Y
+TAG_Y = BATT_Y + BATT_H + 6
+
+# --- bottom row: [BPM | IBI] in ONE window, a wider SIG panel beside it ---
+# SIG carries the coach line that used to be in the header, so it has to be the
+# larger of the two. The vitals window still has to hold "8888" at the 104px
+# face, i.e. VIT_HALF - 26 >= 248px. Both are printed at boot so the fit can be
+# checked against real measured metrics rather than assumed.
+TILE_H = max(150, H // 4)                  # tall enough that BPM/IBI reach
+TILE_Y = H - SAFE - TILE_H                 # the 104px (DejaVu72 x2) face
 TILE_GAP = SAFE
-_avail = R - L - 2 * TILE_GAP
-BPM_W = (_avail * 46) // 100               # BPM is the headline number
-SIDE_W = (_avail - BPM_W) // 2
-TILE_X = (L, L + BPM_W + TILE_GAP, L + BPM_W + TILE_GAP + SIDE_W + TILE_GAP)
-TILE_WS = (BPM_W, SIDE_W, SIDE_W)
+_avail = R - L - TILE_GAP                  # ONE gap now, not two
+VIT_W = (_avail * 46) // 100
+SIG_W = _avail - VIT_W
+VIT_X = L
+SIGP_X = L + VIT_W + TILE_GAP
+VIT_HALF = VIT_W // 2
+VIT_CX = (VIT_X + VIT_HALF // 2, VIT_X + VIT_HALF + (VIT_W - VIT_HALF) // 2)
+
+LBL_Y = TILE_Y + 8
+VAL_MAX_W = VIT_HALF - 26
+VAL_MAX_H = TILE_H - (8 + th(F_TILE_LBL) + 6) - 12
+# Scaling is allowed here and nowhere else: this is THE number on the screen.
+# One fixed face for both readouts so "72" and "--" do not change size.
+F_VAL = fit("8888", VAL_MAX_W, VAL_MAX_H)
+VAL_Y = TILE_Y + TILE_H - th(F_VAL) - 12
+
+SEGS = 16                                  # SIG meter
+SEG_H = TILE_H // 4
+SEG_W = (SIG_W - 28) // SEGS
+SEG_Y = TILE_Y + TILE_H - SEG_H - 14
+
+COACH_Y = LBL_Y + th(F_TILE_LBL) + 8
+COACH_MAX_W = SIG_W - 28
+COACH_MAX_H = SEG_Y - 8 - COACH_Y
+# One fixed face that fits EVERY coach string, so the line never changes size
+# as the state changes - a field whose face moves cannot be repainted in place,
+# and a headline that resizes under you is its own kind of flicker.
+_COACH_STRINGS = STATE_NAMES + ("WAITING FOR STICK",)
+F_COACH = FACE_STACK[-1]
+for _f in FACE_STACK:
+    if th(_f) <= COACH_MAX_H:
+        _ok = True
+        for _t in _COACH_STRINGS:
+            if tw(_t, _f) > COACH_MAX_W:
+                _ok = False
+                break
+        if _ok:
+            F_COACH = _f
+            break
 
 GX = L + 2                                  # waveform window
 GY = HDR_H + SAFE
@@ -313,6 +373,12 @@ GW = (R - 2) - GX
 GH = TILE_Y - SAFE - GY
 GRID_X = max(40, GW // 12)
 GRID_Y = max(30, GH // 5)
+
+# The sweep erases and redraws whole columns, so it wipes the THR / LED BEAT
+# text as it passes under them. Remember where that zone starts (graph-relative)
+# and force a repaint while the sweep is inside it.
+ANN_W = max(tw("THR 8888", F_ANNOT), tw("LED BEAT", F_ANNOT)) + 16
+ANN_GX = GW - ANN_W
 
 # The stick samples at 50Hz and sends every 2nd sample, so packets arrive at
 # 25Hz. One pixel per packet would span ~50s of history across this wide
@@ -373,28 +439,25 @@ def wave_color(s):
     """Yellow while acquiring, green once the quality meter locks."""
     return GREEN if (s and s.state == LOCKED_STATE) else YELLOW
 
-def draw_heart(cx, cy, r, col):
+def draw_heart(col):
+    """Always the SAME geometry, only the colour changes.
+
+    The heart used to shrink between beats, which meant blanking a box around
+    it and redrawing - a visible erase flash 120 times a minute. Repainting the
+    identical shape in a new colour overwrites every pixel it owns and leaves
+    no residue, so the pulse costs no erase at all.
+    """
+    cx, cy, r = HEART_X, HEART_Y, HEART_R
     lcd.fillCircle(cx - r // 2, cy - r // 3, r // 2 + 1, col)
     lcd.fillCircle(cx + r // 2, cy - r // 3, r // 2 + 1, col)
     lcd.fillTriangle(cx - r, cy - r // 4, cx + r, cy - r // 4, cx, cy + r, col)
 
 def draw_heart_area(s):
     beat = bool(s and s.beat)
-    r = HEART_R if beat else (HEART_R * 3) // 4
-    lcd.fillRect(HEART_X - HEART_R - 3, 0, (HEART_R + 3) * 2, HDR_H - 3, BG)
-    draw_heart(HEART_X, HEART_Y, r, RED if beat else RED_DIM)
+    if changed("heart", beat):
+        draw_heart(RED if beat else RED_DIM)
 
-BATT_W = max(34, W // 32)
-BATT_H = max(16, HDR_H // 4)
-BATT_X = R - BATT_W - 4
-BATT_Y = 6
-SIG_W = 4
-SIG_GAP = 3
-SIG_BARS = 4
-SIG_X = BATT_X - 12 - (SIG_W + SIG_GAP) * SIG_BARS
-SIG_Y = BATT_Y
-
-def draw_signal(rate):
+def draw_link_bars(rate):
     """Link-quality bars from the ACTUAL packet rate.
 
     The AP interface exposes connected station MACs but no RSSI, so radio
@@ -402,36 +465,49 @@ def draw_signal(rate):
     is a real, honest measure of link health - not a guess at RSSI.
     """
     frac = 0.0 if rate <= 0 else min(1.0, rate / float(PKT_HZ_EXPECTED))
-    lit = int(frac * SIG_BARS + 0.5)
+    lit = int(frac * BARS + 0.5)
     col = GREEN if frac >= 0.8 else (YELLOW if frac >= 0.4 else CYAN)
-    lcd.fillRect(SIG_X, SIG_Y, (SIG_W + SIG_GAP) * SIG_BARS, BATT_H, BG)
-    for i in range(SIG_BARS):
-        h = 5 + i * ((BATT_H - 5) // (SIG_BARS - 1))
-        lcd.fillRect(SIG_X + i * (SIG_W + SIG_GAP), SIG_Y + BATT_H - h,
-                     SIG_W, h, col if i < lit else GRID)
+    if not changed("bars", (lit, col)):
+        return
+    for i in range(BARS):
+        h = 5 + i * ((BATT_H - 5) // (BARS - 1))
+        x = BARS_X + i * (BAR_W + BAR_GAP)
+        lcd.fillRect(x, BARS_Y, BAR_W, BATT_H - h, BG)
+        lcd.fillRect(x, BARS_Y + BATT_H - h, BAR_W, h, col if i < lit else GRID)
 
-def draw_battery(level, volts, charging):
+def draw_battery(level, charging):
     """Level bar when the gauge reports one; an EXT pill when it does not.
 
-    Tab5 returned getBatteryLevel()=0 with 5482mV present, i.e. running from
-    the USB rail. Drawing an empty battery there would be a lie, so external
-    power gets its own explicit indicator.
+    A level of 0 means the gauge sees no pack and the Tab5 is on the USB rail;
+    drawing an empty battery there would be a lie, so external power gets its
+    own explicit indicator. Bucketed to 5% so a one-count wobble is not a
+    repaint.
     """
+    if not changed("batt", (level // 5, bool(charging), level > 0)):
+        return
     lcd.fillRect(BATT_X - 2, BATT_Y - 2, BATT_W + 8, BATT_H + 4, BG)
+    lcd.drawRect(BATT_X, BATT_Y, BATT_W, BATT_H, LABEL)
+    lcd.fillRect(BATT_X + BATT_W, BATT_Y + BATT_H // 3, 3, BATT_H // 3, LABEL)
     if level and level > 0:
         col = GREEN if level > 50 else (YELLOW if level > 20 else RED)
-        lcd.drawRect(BATT_X, BATT_Y, BATT_W, BATT_H, LABEL)
-        lcd.fillRect(BATT_X + BATT_W, BATT_Y + BATT_H // 3, 3, BATT_H // 3, LABEL)
         fill = (min(100, level) * (BATT_W - 4)) // 100
         if fill:
             lcd.fillRect(BATT_X + 2, BATT_Y + 2, fill, BATT_H - 4,
                          CYAN if charging else col)
     else:
-        lcd.drawRect(BATT_X, BATT_Y, BATT_W, BATT_H, LABEL)
-        lcd.fillRect(BATT_X + BATT_W, BATT_Y + BATT_H // 3, 3, BATT_H // 3, LABEL)
         f = fit("EXT", BATT_W - 6, BATT_H - 4, 6)
         text_at(BATT_X + (BATT_W - tw("EXT", f)) // 2,
                 BATT_Y + (BATT_H - th(f)) // 2, "EXT", f, CYAN, BG)
+
+# The Tab5 gauge alternates between a plausible pack reading and one at roughly
+# half the voltage every ~5s (measured: 100 @ 8393mV / 0 @ 4362mV), i.e. it
+# intermittently reports one cell of the 2S pack instead of the pack. A median
+# does NOT fix this: the fault is a slow square wave, so a window that spans it
+# just flips whenever the sample counts tip. Taking the MAX over the window
+# rejects the half-scale misread and still tracks a real discharge, lagging by
+# at most the window length.
+BATT_WIN = 8                   # samples, 1/s -> 8s of history
+_batt_hist = []
 
 def read_power():
     try:
@@ -440,24 +516,27 @@ def read_power():
     except Exception:
         return (0, 0, False)
 
-def draw_header(s, nlinked):
-    lcd.fillRect(0, 0, W, HDR_H, BG)
-    lcd.fillRect(0, HDR_H - 2, W, 2, FRAME)
-    text_at(L, HDR_H // 2 - th(F_TITLE) - 2, APP_NAME, F_TITLE, TEXT, BG)
-    text_at(L, HDR_H // 2 + 4, APP_SUB, F_SUB, LABEL, BG)
+batt_raw = (0, 0)              # last unfiltered reading, for the stat line
 
-    if s is None:
-        name, col = "WAITING FOR STICK", CYAN
-    else:
-        name = STATE_NAMES[s.state] if s.state < len(STATE_NAMES) else "?"
-        col = GREEN if s.state == LOCKED_STATE else YELLOW
-    f = fit(name, W // 3, HDR_H // 2, 4)
-    text_at(SIG_X - 12 - tw(name, f), HDR_H // 2 - th(f) - 2, name, f, col, BG)
+def batt_sample():
+    """Push one raw reading, return the de-glitched (level, volts, charging)."""
+    global batt_raw
+    lvl, mv, chg = read_power()
+    batt_raw = (lvl, mv)
+    _batt_hist.append((lvl, mv, chg))
+    if len(_batt_hist) > BATT_WIN:
+        del _batt_hist[0:len(_batt_hist) - BATT_WIN]
+    best = _batt_hist[0]
+    for r in _batt_hist:
+        if r[0] > best[0] or (r[0] == best[0] and r[1] > best[1]):
+            best = r
+    return (best[0], best[1], chg)          # charging is not glitchy, use live
 
+def draw_link_tag(nlinked):
     tag = "%d LINKED" % nlinked if nlinked else "NO LINK"
-    text_at(SIG_X - 12 - tw(tag, F_TAG), HDR_H // 2 + 6, tag, F_TAG,
-            GREEN if nlinked else LABEL, BG)
-    draw_heart_area(s)
+    if changed("tag", tag):
+        field("tag", 0, TAG_Y, tag, F_TAG, GREEN if nlinked else LABEL,
+              BG, right=R)
 
 def draw_resync_banner(on):
     """Big confirmation when the stick's blue button is pressed, so the press
@@ -479,6 +558,7 @@ def draw_graph_frame():
         lcd.fillRect(GX + x, GY, 1, GH, GRID)
     for y in range(GRID_Y, GH, GRID_Y):
         lcd.fillRect(GX, GY + y, GW, 1, GRID)
+    forget("thr", "beattag")     # this wiped them; whoever erases, forgets
 
 def thresh_y(s):
     lo, hi = (s.smin, s.smax) if s else (0, 1023)
@@ -487,17 +567,20 @@ def thresh_y(s):
     t = s.thresh if s else 550
     return clamp(mapv(t, lo, hi, GY + GH - 6, GY + 6), GY + 6, GY + GH - 6)
 
-def draw_annotations(s):
-    """THR readout + LED BEAT tag inside the graph."""
+def draw_annotations(s, force=False):
+    """THR readout + LED BEAT tag inside the graph.
+
+    `force` bypasses the change check for the one case where the pixels went
+    away without the value changing: the sweep column erasing straight through
+    the text. Repainting is still an in-place opaque print, never an erase.
+    """
     thr = "THR %d" % (s.thresh if s else 0)
-    wpx = tw(thr, F_ANNOT)
-    lcd.fillRect(GX + GW - wpx - 16, GY + 4, wpx + 14, th(F_ANNOT) + 4, BG)
-    text_at(GX + GW - wpx - 8, GY + 6, thr, F_ANNOT, TEXT, BG)
-    tag = "LED BEAT"
-    wpx = tw(tag, F_ANNOT)
-    ty = GY + GH - th(F_ANNOT) - 8
-    lcd.fillRect(GX + GW - wpx - 16, ty - 2, wpx + 14, th(F_ANNOT) + 4, BG)
-    text_at(GX + GW - wpx - 8, ty, tag, F_ANNOT, wave_color(s), BG)
+    if force or changed("thr", thr):
+        field("thr", 0, GY + 6, thr, F_ANNOT, TEXT, BG, right=GX + GW - 8)
+    col = wave_color(s)
+    if force or changed("beattag", col):
+        field("beattag", 0, GY + GH - th(F_ANNOT) - 8, "LED BEAT", F_ANNOT,
+              col, BG, right=GX + GW - 8)
 
 def clear_column(cx, s):
     x = GX + cx
@@ -519,6 +602,7 @@ def draw_wave(s, batch):
     if hi <= lo:
         hi = lo + 1
     col = wave_color(s)
+    crossed_annot = False
     for sample, beat in batch:
         y = clamp(mapv(sample, lo, hi, GY + GH - 6, GY + 6),
                   GY + 6, GY + GH - 6)
@@ -532,76 +616,118 @@ def draw_wave(s, batch):
         if beat:
             for yy in range(GY + 4, GY + GH - 4, 6):
                 lcd.drawPixel(GX + gx, yy, YELLOW)
+        if gx >= ANN_GX:
+            crossed_annot = True
         last_gy = y
         gx += X_STEP
         if gx >= GW:
             gx = 0
             draw_graph_frame()
-            draw_annotations(s)
+            crossed_annot = True
+    if crossed_annot:
+        draw_annotations(s, force=True)
 
-def draw_tile(i, label, value, unit, col, meter=None, flash=False):
-    x, TILE_W = TILE_X[i], TILE_WS[i]
-    bg = col if flash else BG                   # BPM tile blinks on each beat
-    fg = BG if flash else col
-    lcd.fillRect(x, TILE_Y, TILE_W, TILE_H, bg)
-    rrect(x, TILE_Y, TILE_W, TILE_H, 12, col if flash else FRAME)
-    col = fg
-    text_at(x + 14, TILE_Y + 8, label, F_TILE_LBL, BG if flash else LABEL, bg)
-    if meter is None:
-        vf = fit(value, TILE_W - 40, (TILE_H * 3) // 5)
-        vy = TILE_Y + TILE_H - th(vf) - 10
-        text_at(x + 18, vy, value, vf, col, bg)
-        if unit:
-            uf = fit(unit, 120, 40, 6)
-            text_at(x + 18 + tw(value, vf) + 10,
-                    vy + th(vf) - th(uf) - 6, unit, uf,
-                    BG if flash else LABEL, bg)
-    else:
-        segs = 16
-        sw = (TILE_W - 28) // segs
-        sh = TILE_H // 2
-        sy = TILE_Y + TILE_H - sh - 14
-        filled = clamp(meter * segs // 100, 0, segs)
-        for k in range(segs):
-            lcd.fillRect(x + 14 + k * sw, sy, sw - 3, sh,
-                         col if k < filled else METER_OFF)
+# ------------------------- bottom row: vitals + SIG -------------------------
+# Two panels, not three. [BPM | IBI] share one window with a hairline divider;
+# SIG is the wider one and carries the coach line that used to be jammed into
+# the header. Nothing here fills a panel rect: the borders and labels are
+# static chrome painted once at boot, and every value repaints in place.
+#
+# The BPM tile's beat flash is gone on purpose. Inverting a 561x180 panel 120
+# times a minute WAS the second-biggest flicker source on the screen, and the
+# beat is already reported twice - the heart in the header and the yellow
+# marker on the waveform.
 
-def draw_tiles(s, stale):
+def draw_vitals(s, stale):
     if s is None or stale:
-        draw_tile(0, "BPM", "--", "", LABEL)
-        draw_tile(1, "IBI", "--", "ms", LABEL)
-        draw_tile(2, "SIG", "", "", LABEL, meter=0)
+        bpm, ibi, col = "--", "--", LABEL
+    else:
+        col = wave_color(s)
+        bpm = str(s.bpm) if s.bpm else "--"
+        ibi = str(s.ibi) if s.ibi else "--"
+    if changed("bpm", (bpm, col)):
+        field("bpm", 0, VAL_Y, bpm, F_VAL, col, BG, center=VIT_CX[0])
+    if changed("ibi", (ibi, col)):
+        field("ibi", 0, VAL_Y, ibi, F_VAL, col, BG, center=VIT_CX[1])
+
+def draw_coach(s, stale):
+    """The signal coach, now the widest readout on the screen."""
+    if s is None or stale:
+        name, col = "WAITING FOR STICK", CYAN
+    else:
+        name = STATE_NAMES[s.state] if s.state < len(STATE_NAMES) else "?"
+        col = GREEN if s.state == LOCKED_STATE else YELLOW
+    if changed("coach", (name, col)):
+        field("coach", SIGP_X + 14, COACH_Y, name, F_COACH, col, BG)
+
+def draw_meter(s, stale):
+    if s is None or stale:
+        pct, col = 0, LABEL
+    else:
+        col = wave_color(s)
+        pct = clamp(s.smax - s.smin, 0, 600) * 100 // 600
+    filled = clamp(pct * SEGS // 100, 0, SEGS)
+    if not changed("meter", (filled, col)):
         return
-    col = wave_color(s)
-    draw_tile(0, "BPM", str(s.bpm) if s.bpm else "--", "", col, flash=s.beat)
-    draw_tile(1, "IBI", str(s.ibi) if s.ibi else "--", "ms", col)
-    rng = clamp(s.smax - s.smin, 0, 600)
-    draw_tile(2, "SIG", "", "", col, meter=rng * 100 // 600)
+    for k in range(SEGS):
+        lcd.fillRect(SIGP_X + 14 + k * SEG_W, SEG_Y, SEG_W - 3, SEG_H,
+                     col if k < filled else METER_OFF)
+
+def draw_static():
+    """Everything that never changes, painted exactly once.
+
+    Borders, fixed labels and the title block used to be repainted on a timer
+    along with the values they surround. They are chrome; they get one pass.
+    """
+    lcd.fillScreen(BG)
+    lcd.fillRect(0, HDR_H - 2, W, 2, FRAME)
+    text_at(L, TITLE_Y, APP_NAME, F_TITLE, TEXT, BG)
+    text_at(L, SUB_Y, APP_SUB, F_SUB, LABEL, BG)
+    draw_graph_frame()
+    rrect(VIT_X, TILE_Y, VIT_W, TILE_H, 12, FRAME)
+    rrect(SIGP_X, TILE_Y, SIG_W, TILE_H, 12, FRAME)
+    lcd.fillRect(VIT_X + VIT_HALF, TILE_Y + 16, 1, TILE_H - 32, FRAME)
+    text_at(VIT_X + 14, LBL_Y, "BPM", F_TILE_LBL, LABEL, BG)
+    # The unit rides on the label: at 104px a four-digit IBI already uses
+    # VAL_MAX_W, so there is no room for a suffix beside the number.
+    text_at(VIT_X + VIT_HALF + 14, LBL_Y, "IBI ms", F_TILE_LBL, LABEL, BG)
+    text_at(SIGP_X + 14, LBL_Y, "SIG", F_TILE_LBL, LABEL, BG)
+    draw_heart(RED_DIM)
+    forget("heart", "bars", "batt", "tag", "thr", "beattag",
+           "bpm", "ibi", "coach", "meter")
 
 # ============================== BOOT ==============================
 
-batt_level, batt_v, batt_chg = read_power()
-draw_header(None, 0)
-draw_signal(0)
-draw_battery(batt_level, batt_v, batt_chg)
-draw_graph_frame()
+draw_static()
+batt_level, batt_v, batt_chg = batt_sample()
+draw_link_tag(0)
+draw_link_bars(0)
+draw_battery(batt_level, batt_chg)
 draw_annotations(None)
-draw_tiles(None, True)
+draw_vitals(None, True)
+draw_coach(None, True)
+draw_meter(None, True)
 print("pulselink_tab5: %dx%d dashboard, waiting for sticks" % (W, H))
+# Printed so the layout can be checked against MEASURED font metrics from the
+# serial log alone - this app has no way to look at its own screen.
+print("LAYOUT: vitals x=%d w=%d half=%d | sig x=%d w=%d" %
+      (VIT_X, VIT_W, VIT_HALF, SIGP_X, SIG_W))
+print("LAYOUT: value face h=%d  '8888' w=%d  fits %d  (y=%d)" %
+      (th(F_VAL), tw("8888", F_VAL), VAL_MAX_W, VAL_Y))
+print("LAYOUT: coach face h=%d  longest w=%d  fits %d x %d" %
+      (th(F_COACH), max([tw(t, F_COACH) for t in _COACH_STRINGS]),
+       COACH_MAX_W, COACH_MAX_H))
 
-prev = None
-prev_beat = False
 prev_resync = False
-last_hdr = time.ticks_ms()
+UI_MS = 50                      # text/meter refresh gate; see the main loop
+last_ui = time.ticks_ms()
 last_stat = time.ticks_ms()
 last_wave = time.ticks_ms()
 rx_count = 0
 rate_mark = time.ticks_ms()     # packet-rate window for the signal bars
 rate_base = 0
 pkt_rate = 0
-last_icons = 0
-batt_level = batt_v = 0
-batt_chg = False
+last_batt = time.ticks_ms()
 
 while True:
     now = time.ticks_ms()
@@ -645,15 +771,22 @@ while True:
             del s.wave[:]
             draw_wave(s, batch)
 
-    # change-driven: only repaint what actually changed
-    cur = None if stale else (s.bpm, s.ibi, s.state, s.smax - s.smin)
-    if cur != prev:
-        draw_tiles(s, stale)
+    # Every painter below is change-driven: each compares its value against
+    # what is actually on the panel and returns without touching a pixel when
+    # nothing moved. There is no repaint timer any more - the old 500ms header
+    # rebuild was itself the flicker.
+    #
+    # The heart is checked EVERY pass on purpose. A beat flag only lives for
+    # the one packet that carries it (~40ms), so a gate here would drop beats.
+    # It costs a dict lookup and a bool compare when nothing changed.
+    draw_heart_area(None if stale else s)
+    if time.ticks_diff(now, last_ui) >= UI_MS:
+        last_ui = now
+        draw_vitals(s, stale)
+        draw_coach(s, stale)
+        draw_meter(s, stale)
         draw_annotations(None if stale else s)
-        prev = cur
-    if s is not None and s.beat != prev_beat:
-        draw_heart_area(s)
-        prev_beat = s.beat
+        draw_link_tag(nlinked)
 
     # RESYNC: the stick sets state 7 (and a flag) for ~900ms after BtnA
     rs = bool(s and not stale and (s.resync or s.state == 7))
@@ -662,31 +795,30 @@ while True:
             draw_resync_banner(True)
         else:
             draw_graph_frame()               # wipe the banner cleanly
-            draw_annotations(s)
+        draw_annotations(None if stale else s, force=True)
         prev_resync = rs
-    if time.ticks_diff(now, last_hdr) > 500:
-        draw_header(None if stale else s, nlinked)
-        draw_signal(pkt_rate)
-        draw_battery(batt_level, batt_v, batt_chg)
-        last_hdr = now
 
     # measured packet rate over a 1s window -> signal bars
     if time.ticks_diff(now, rate_mark) >= 1000:
         pkt_rate = rx_count - rate_base
         rate_base = rx_count
         rate_mark = now
-        draw_signal(pkt_rate)
+        draw_link_bars(pkt_rate)
 
-    if time.ticks_diff(now, last_icons) >= 5000:
-        last_icons = now
-        batt_level, batt_v, batt_chg = read_power()
-        draw_battery(batt_level, batt_v, batt_chg)
+    # Gauge sampled at 1Hz and de-glitched over 8 samples; see batt_sample().
+    if time.ticks_diff(now, last_batt) >= 1000:
+        last_batt = now
+        batt_level, batt_v, batt_chg = batt_sample()
+        draw_battery(batt_level, batt_chg)
 
     if time.ticks_diff(now, last_stat) >= 5000:
         last_stat = now
-        print("rx=%d bad=%d rate=%d/s linked=%d bpm=%s state=%s batt=%s(%dmV)"
+        # batt shows filtered/raw so the de-glitching can be seen working
+        # rather than assumed - raw is expected to flap, filtered is not.
+        print("rx=%d bad=%d rate=%d/s linked=%d bpm=%s state=%s "
+              "batt=%d%%(%dmV) raw=%d%%(%dmV)"
               % (rx_count, rx_bad, pkt_rate, nlinked,
                  s.bpm if s else "-", s.state if s else "-",
-                 batt_level, batt_v))
+                 batt_level, batt_v, batt_raw[0], batt_raw[1]))
 
     time.sleep_ms(5)          # always yield: never starve the task watchdog

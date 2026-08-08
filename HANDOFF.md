@@ -14,7 +14,11 @@ All work below is **approved** by Yury. Branch `tab5-remote-display`.
 - [ ] **5. Physical cold-power cycles + BtnA RESYNC / BtnB checks** (needs
       Yury's hands — never done)
 - [ ] **6. `docs/hackster/` text pack** (only after hardware passes)
-- [ ] **7. UI rework requested 2026-08-08** — see "NEXT UP" below. Partly done.
+- [x] **7. UI rework requested 2026-08-08** — implemented and deployed.
+      **Geometry verified numerically from the device's own boot log; the
+      screen itself still has not been looked at.**
+- [x] **8. `tools/malformed_probe.py` actually run** — see below.
+- [x] **9. Battery gauge de-glitched** — see below.
 
 Repo will eventually move to the World Famous Electronics org. Only the README
 clone command hardcodes `yury-g`.
@@ -89,34 +93,61 @@ the ~1.8 s association itself, not the retry gap. If you want a real verdict,
 run n≥10 per scenario. The unambiguous win this session is that `tab5_only`
 recovers **at all** (`rx=0` forever → `rx=400+` every run).
 
-## NEXT UP — UI rework requested 2026-08-08
+## UI rework requested 2026-08-08 — DONE (except the visual check)
 
 Requested: consolidate the signal coach into the SIG tile and make SIG the
 largest of the set; put BPM and IBI together in one window; **larger** BPM/IBI
-text; remove screen flicker.
+text; remove screen flicker. All implemented and deployed.
 
-**Done so far:**
-- Font layer generalised to a "face" = `(font, integer_scale)`, `FACE_STACK`.
-- `TILE_H` 144 → 180, so BPM/IBI now select `(DejaVu72, 2)` = **104 px**,
-  double the previous 52 px. Verified numerically, **not visually.**
-- Flicker-free primitives written and ready but **NOT YET WIRED UP**:
-  `changed()`, `forget()`, `field()`, `_clear_outside()`.
+**Flicker.** Every painter is now change-driven through `changed()`/`field()`,
+and there is **no repaint timer left in the main loop**. What was removed:
 
-**Still to do:**
-- Wire `field()`/`changed()` through `draw_header`, `draw_annotations`,
-  `draw_tile`, `draw_signal`, `draw_battery`. **The main flicker source is
-  `draw_header()`, which blanks the whole header bar with `fillRect` and
-  redraws it every 500 ms whether or not anything changed.** Second worst is
-  the BPM tile's beat flash, which inverts the entire tile — recommend
-  dropping it and keeping the heart pulse + waveform beat marker.
-- Split the bottom row into **two** panels: `[BPM | IBI]` in one window, and a
-  wider SIG panel carrying the coach text (currently in the header). Worked-out
-  geometry: `VIT_W = (_avail * 46) // 100`, `SIG_W = _avail - VIT_W`; that
-  keeps SIG the larger panel while still leaving `VIT_HALF - 26 = 254 px`,
-  enough for `"8888"` at `(DejaVu72, 2)` = 248 px. Do the arithmetic before
-  trusting it — it is tight.
-- Static chrome (borders, fixed labels, title) should be painted **once** at
-  boot, not on every update.
+- `draw_header()` — deleted. It blanked the whole 1280×90 bar and redrew it
+  every 500 ms unconditionally; that was the single biggest flicker source.
+  Its parts are now `draw_link_tag()`, `draw_link_bars()`, `draw_battery()`,
+  each repainting only on a real change, plus static chrome.
+- The BPM tile's **beat flash is gone** — inverting a 561×180 panel 120×/min
+  was the second worst. The beat is still reported twice: the header heart and
+  the yellow marker on the waveform.
+- The **heart no longer changes size**. Shrinking it meant blanking a box
+  around it twice per beat. It is now one fixed shape repainted in a different
+  colour, so the pulse costs no erase at all.
+- Static chrome (borders, divider, fixed labels, title block) is painted once
+  in `draw_static()`.
+- `draw_tile()`/`draw_tiles()` deleted — they refilled a whole panel per update.
+
+**Layout.** Two panels, printed by the device at boot so the fit is checked
+against measured metrics rather than assumed. Real numbers from the Tab5:
+
+```
+LAYOUT: vitals x=20 w=561 half=280 | sig x=601 w=659
+LAYOUT: value face h=104  '8888' w=248  fits 254  (y=584)
+LAYOUT: coach face h=52   longest w=498  fits 631 x 70
+```
+
+SIG (659) is wider than the vitals window (561), as asked. BPM/IBI are at the
+**104 px** face with 6 px of width to spare — that margin is the whole budget,
+so any font or padding change must be re-checked against these lines.
+
+Two things worth knowing if you touch this:
+
+- `_avail` uses **one** `TILE_GAP`, not two — there are two panels now. The
+  geometry sketched in the previous handoff assumed the old three-panel
+  `_avail` and would have wasted 20 px.
+- The IBI unit rides on the **label** (`"IBI ms"`). At 104 px a four-digit IBI
+  already consumes `VAL_MAX_W`; a suffix beside the number would have forced
+  the face down to 52 px, undoing the whole point.
+
+**The sweep used to eat the annotations.** `clear_column()` erases full-height
+columns, so the sweep wiped `THR`/`LED BEAT` as it passed under them and they
+only came back on the next wrap or value change. `draw_wave()` now notices when
+the sweep is inside the annotation band (`ANN_GX`) and forces a repaint. Any
+region-wiping function is now responsible for `forget()`-ing the fields it
+destroyed — `draw_graph_frame()` does this.
+
+**Not done: nobody has looked at the screen.** Everything above is arithmetic
+and serial output. "Does it look right, and is 104 px big enough" is Yury's
+call — that is the only open item on the UI.
 
 ## FONT FACTS — measured on the Tab5, do not guess
 
@@ -145,20 +176,35 @@ text; remove screen flicker.
   `192.168.4.1:5005`. **NOT ESP-NOW** — the P4 has no radio.
 - Boot budget, measured: Tab5 firmware ready ≈ 4.9 s after reset, AP up
   ≈ 8.3 s. The ~3.4 s gap is inside `M5.begin()`.
-- **Battery gauge is flaky and now MATTERS.** It alternates between
-  `100 (8393 mV)` and `0 (4362 mV)` every ~5 s. The old note that it always
-  read 0 is out of date — a battery is present now. The indicator will visibly
-  flip between a full bar and the "EXT" pill. Needs debouncing or a
-  median-of-N before the power dashboard (roadmap item 3) is worth building.
+- **Battery gauge is flaky — now filtered, but the fault is still there.** The
+  raw gauge alternates between `100% (8393 mV)` and `0% (~4360 mV)` every ~5 s,
+  i.e. it intermittently reports one cell of the 2S pack instead of the pack.
+  `batt_sample()` takes the **max over an 8-sample, 1 Hz window**. A median
+  does *not* work here and was not used: the fault is a slow square wave, so
+  any window spanning it just flips whenever the sample counts tip. Max rejects
+  the half-scale misread and still tracks a real discharge, lagging by at most
+  the window. Measured on hardware after the fix — `raw=` flaps, `batt=` does
+  not:
+  ```
+  rx=833  bad=0 rate=24/s linked=1 batt=100%(8393mV) raw=0%(4352mV)
+  rx=958  bad=0 rate=25/s linked=1 batt=100%(8393mV) raw=100%(8393mV)
+  rx=1208 bad=0 rate=25/s linked=1 batt=100%(8393mV) raw=0%(4370mV)
+  ```
+  **Anything reading power must go through `batt_sample()`, not `M5.Power`.**
 - Link bars come from **measured packet rate**; the AP exposes no RSSI.
 
 ## Test tooling
 
-- `tools/malformed_probe.py` — **written, never run.** Runs on the stick
+- `tools/malformed_probe.py` — **run 2026-08-08, PASSED.** Runs on the stick
   (`stick.sh run tools/malformed_probe.py`), joins the AP and sends short /
   long / bad-magic / wrong-version / valid packets over the real link.
-  Expect `bad=` +4 and `rx=` +1 per round on the Tab5. **Run this.**
-- `scratchpad/timeit.py` — dual-serial timing harness (see above).
+  Result: `bad` went **0 → 20** across 5 rounds, exactly the predicted 4
+  rejects per round, and `LINK: stick aabbcc joined` confirms the valid packet
+  in each round *was* accepted and attributed to the probe's fake device id.
+  No crash, no mis-parse. Redeploy `pulselink.py` to the stick afterwards — the
+  probe leaves it sitting at the REPL.
+- `tools/timeit.py` — dual-serial timing harness (see above). It is in the repo
+  now; the older note calling it `scratchpad/timeit.py` was stale.
 
 ## Traps that have already cost real time
 
@@ -169,9 +215,15 @@ text; remove screen flicker.
   `link_init()`, and the ENOMEM stall above.
 - `./stick.sh run` reuses REPL globals; code can pass there and still
   `NameError` on a cold boot. **Verify with `deploy` + a real reset.**
-- `stick.sh deploy` to the **Tab5 appears to hang** — mpremote does not exit
-  cleanly while the app spews serial. The copy and reset DO complete. Background
-  it, `pkill -f mpremote` after ~45 s, then verify passively.
+- `stick.sh deploy` to the Tab5 used to look like a 45 s hang. **Fixed.** The
+  cause was `mpremote exec machine.reset()` waiting for an exec to return on a
+  board that immediately starts spewing serial. `stick.sh` now resets over raw
+  pyserial (`hard_reset()`); a Tab5 deploy takes ~4 s and exits cleanly. There
+  is also a `stick.sh reset` now. No more `pkill -f mpremote`.
+- **Identifying the ports with `stick.sh status` kills whatever is running.**
+  `status` interrupts the REPL, so probing both ports to work out which is
+  which leaves both boards idle and the link dead — easy to misread as a link
+  bug. `stick.sh reset` (or a redeploy) brings them back.
 - `lcd.print()` paints an **opaque background box** — draw icons **after** text.
   This is also what makes flicker-free in-place repainting possible.
 - `mpremote` attaching **stops the running app**. Read serial **passively**

@@ -14,6 +14,10 @@ Requested 2026-08-08. Not started; listed in priority order as given.
    most-requested features for a device like this: state of charge, estimated
    runtime remaining, charge/discharge rate, cell voltage. Use graphs and
    gauges for anything that changes often.
+   *Prerequisite now met:* the gauge's half-scale misread is filtered in
+   `batt_sample()`, so a reading can be trusted. Anything built here must go
+   through that filter, not `M5.Power` directly — the raw gauge still flaps
+   between `100%(8393mV)` and `0%(~4360mV)` roughly every 5s.
 4. **Multiple sensors.** Support 2–4 PulseSensors across multiple StickS3s in
    any combination. Show BPM and IBI for a sensor together in one window.
 5. **App menu.** A menu to reach more apps on the device.
