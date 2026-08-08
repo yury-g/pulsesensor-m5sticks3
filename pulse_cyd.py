@@ -514,22 +514,44 @@ _link_err = False
 _sbuf = []
 
 def link_init():
-    """Bring up the radio and start joining the Tab5's AP. Never blocks:
-    connection completes in the background and link_send() polls for it."""
+    """Bring up the radio and start joining the Tab5's AP. Never blocks.
+
+    Each step is guarded SEPARATELY. Previously one `w.connect()` raising
+    "Wifi Internal State Error" (which it does if the interface is already
+    connected, e.g. left over from a prior run) aborted the whole function
+    before the socket was ever created - so the link silently never existed.
+    """
     global _sock, _wlan
     if not LINK_ENABLED:
         return
     try:
         import network, socket
+    except Exception as ex:
+        print("LINK: no network module (%s)" % ex)
+        return
+    try:
         _wlan = network.WLAN(network.STA_IF)
-        _wlan.active(True)
+        if not _wlan.active():
+            _wlan.active(True)
+    except Exception as ex:
+        print("LINK: WLAN active failed (%s)" % ex)
+        _wlan = None
+        return
+    try:
         if not _wlan.isconnected():
             _wlan.connect(LINK_SSID, LINK_PSK)
+    except Exception as ex:
+        # Not fatal: link_send() retries on its own schedule.
+        print("LINK: initial connect deferred (%s)" % ex)
+    try:
         _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         _sock.setblocking(False)
-        print("LINK: joining '%s' -> udp %s:%d" % (LINK_SSID, LINK_HOST, LINK_PORT))
     except Exception as ex:
-        print("LINK: unavailable (%s) - running standalone" % ex)
+        print("LINK: socket failed (%s)" % ex)
+        _sock = None
+        return
+    print("LINK: '%s' -> udp %s:%d (connected=%s)"
+          % (LINK_SSID, LINK_HOST, LINK_PORT, _wlan.isconnected()))
 
 def link_send():
     """16-byte fixed packet. Non-blocking; any failure is ignored so the
@@ -553,7 +575,7 @@ def link_send():
             try:
                 _wlan.connect(LINK_SSID, LINK_PSK)
             except Exception:
-                pass
+                pass          # already-connecting raises; harmless
         return
     if not _link_up:
         _link_up = True
