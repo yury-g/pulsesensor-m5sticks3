@@ -12,7 +12,7 @@ required.
 - **M5Stack controller:**
   [StickS3 documentation](https://docs.m5stack.com/en/core/StickS3)
 - **Sensor:**
-  [PulseSensor](https://pulsesensor.com/)
+  [PulseSensor Amped kit](https://pulsesensor.com/products/pulse-sensor-amped)
 
 ## Why StickS3 is the heart of PulseLink
 
@@ -49,7 +49,11 @@ detection to the signal already visible on screen.
 | Quantity | Component | Purpose |
 |---:|---|---|
 | 1 | M5Stack StickS3 | Samples, processes, and displays the signal |
-| 1 | PulseSensor kit | Captures the optical pulse waveform |
+| 1 | [PulseSensor Amped kit](https://pulsesensor.com/products/pulse-sensor-amped) | Captures the optical pulse waveform |
+
+That is the complete electronics list. The PulseSensor kit's black, red, and
+purple leads plug directly onto the StickS3 header; no breadboard, adapter
+harness, or additional jumper wires are needed.
 
 ### Wiring
 
@@ -114,12 +118,13 @@ once.
 
 Possible beats must fall within the educational demo's interval, rate, and
 amplitude limits. A confidence score rises for consistent beats and falls when
-the signal becomes uncertain. BPM appears only after confidence reaches 10 of
-12, then uses up to ten recent qualified intervals for smoothing.
+the signal becomes uncertain. BPM appears only after the score passes the
+10-of-12 lock threshold, then uses up to ten recent qualified intervals for
+smoothing.
 
 The current code corresponds to the real-hardware-verified `v1.1-resync` build.
-The source file name was added as `pulselink.py` for the public project; the
-original development name, `pulse_cyd.py`, is retained for provenance.
+The finished application is [`pulselink.py`](pulselink.py). Earlier experiments
+and filenames remain available through the public Git history and tags.
 
 ## Limits and safety
 
@@ -133,7 +138,9 @@ and must not be used for diagnosis, treatment, or health decisions.**
 
 PulseLink is an original StickS3 and MicroPython implementation by Yury Gitman.
 It adapts beat-detection concepts from the MIT-licensed
-[PulseSensor Playground](https://github.com/WorldFamousElectronics/PulseSensorPlayground).
+[PulseSensor Playground](https://github.com/WorldFamousElectronics/PulseSensorPlayground),
+whose copyright and license notice are preserved in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 Disclosure: Yury is a co-founder of World Famous Electronics, the company that
 makes PulseSensor.

@@ -2,7 +2,7 @@
 """Render StickS3 screens for the article.
 
 Reconstructed render, NOT a device framebuffer capture. It reuses the exact
-layout constants, palette and detector from pulse_cyd.py (v1.1-resync) and
+layout constants, palette and detector from pulselink.py (v1.1-resync) and
 drives them with a synthesized PPG waveform. All values are SIMULATED.
 
 Outputs PNG (native 240x135 + 4x) and an animated SVG showing the real
@@ -15,12 +15,12 @@ OUT = os.path.join(os.path.dirname(__file__), "..", "docs", "hackster", "screen-
 os.makedirs(OUT, exist_ok=True)
 
 W, H = 240, 135
-# --- palette, from pulse_cyd.py CONFIG ---
+# --- palette, from pulselink.py CONFIG ---
 BG, PANEL, GRID, GRID_SOFT = "#060A06", "#0C140C", "#1C4A32", "#143323"
 TEXT, LABEL, ANNOT = "#FFFFFF", "#5BE7FF", "#FFE34D"
 BLUE, YELLOW, GREEN = "#5BE7FF", "#FFE34D", "#6EF58A"
 
-# --- layout, from pulse_cyd.py LAYOUT ---
+# --- layout, from pulselink.py LAYOUT ---
 SAFE = 5
 L, R = SAFE, W - SAFE
 HDR_Y, HDR_BOT = 4, 20
@@ -37,7 +37,7 @@ THR_W = 62
 THR_X, THR_Y = GX + GW - THR_W - 2, GY + 2
 CONF_SEGS, CONF_SEG_W = 10, 4
 
-# --- detector constants, from pulse_cyd.py ---
+# --- detector constants, from pulselink.py ---
 PULSE_THRESHOLD, MIN_AMP = 550, 20
 MIN_BPM, MAX_BPM, MIN_IBI, MAX_IBI = 40, 180, 333, 1500
 Q_STEPS, Q_LOCK, Q_UP, Q_DOWN = 12, 10, 3, 1
@@ -61,7 +61,7 @@ def tw(d, s, f):
     return d.textbbox((0, 0), s, font=f)[2]
 
 class Sim:
-    """The pulse_cyd.py detector, faithfully ported."""
+    """The pulselink.py detector, faithfully ported."""
     def __init__(self):
         self.smin = self.smax = 512
         self.thresh = PULSE_THRESHOLD

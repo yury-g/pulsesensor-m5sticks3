@@ -3,6 +3,9 @@
 #
 # pulselink.py — PulseLink for the M5Stack StickS3.
 # UIFlow2 MicroPython.  Sensor: signal -> G2, VCC -> 3V3, GND -> GND.
+# Beat-detection approach adapted from PulseSensorPlayground (MIT):
+# https://github.com/WorldFamousElectronics/PulseSensorPlayground
+# See THIRD_PARTY_NOTICES.md.
 #
 # ONE COLOUR LANGUAGE
 #   The waveform, the heart, the coach and the tile borders always show the
@@ -45,7 +48,7 @@ BLUE      = 0x5BE7FF           # collecting
 YELLOW    = 0xFFE34D           # locking
 GREEN     = 0x6EF58A           # confident
 
-# --- detector: the PulseSensor / CYD algorithm, on the 10-bit scale ---
+# --- detector: the PulseSensor beat-detection algorithm, on the 10-bit scale ---
 PULSE_THRESHOLD = 550          # initial trigger level
 NO_BEAT_TIMEOUT = 3000         # ms without a qualified beat -> drop the lock
 MIN_BPM, MAX_BPM = 40, 180     # plausible rate window
@@ -164,7 +167,7 @@ adc = ADC(Pin(SENSOR_PIN))
 adc.atten(ADC.ATTN_11DB)
 
 # ============================== DETECTOR ==============================
-# Port of the PulseSensor / CYD algorithm: adaptive threshold midway between
+# PulseSensor beat-detection approach: adaptive threshold midway between
 # the running peak and trough, rising-edge detection behind a refractory gate,
 # plausibility qualification, and a confidence counter that must reach Q_LOCK
 # before any number is shown.
@@ -173,7 +176,7 @@ def beating():
     return time.ticks_diff(flash_until, time.ticks_ms()) > 0
 
 def track_range(s):
-    """Window that creeps shut and snaps open - CYD updateSignalRange()."""
+    """Adaptive signal window that creeps shut and snaps open."""
     global smin, smax
     smin = min(smin + 1, s)
     smax = max(smax - 1, s)
@@ -250,7 +253,7 @@ def detect(now):
     global flash_until, beat_mark
 
     n = time.ticks_diff(now, last_beat)
-    gate = (ibi_ms * 3) // 5                 # CYD's 3/5-of-last-IBI gate
+    gate = (ibi_ms * 3) // 5                 # 3/5-of-last-IBI refractory gate
 
     if sig < thresh and n > gate and sig < trough:
         trough = sig
@@ -503,7 +506,7 @@ for _c in ("QUALIFIED", "HOLD STEADY", "SIGNAL LOST", "NO SIGNAL",
     _w = tw(_c)
     print("  coach %-13r %3dpx %s"
           % (_c, _w, "OK" if _w <= TILE_W - 12 else "TOO WIDE"))
-print("PulseLink running: G2 @ %dHz, BPM averaged over %d beats. BtnA = RESYNC, BtnB = reset."
+print("PulseLink running: G2 @ %dHz, BPM averaged over up to %d beats. BtnA = RESYNC, BtnB = reset."
       % (1000 // SAMPLE_MS, BPM_AVERAGE_N))
 
 # ============================== MAIN LOOP ==============================
@@ -533,7 +536,7 @@ while True:
     if time.ticks_diff(now, next_t) > 100:       # fell behind: resync
         next_t = time.ticks_add(now, SAMPLE_MS)
 
-    sig = adc.read() >> 2                        # 12-bit -> 10-bit, as on CYD
+    sig = adc.read() >> 2                        # 12-bit -> 10-bit for detector compatibility
     track_range(sig)
     detect(now)
     draw_wave()
