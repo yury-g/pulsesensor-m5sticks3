@@ -1,7 +1,9 @@
-# tab5_pulse.py — PulseSensor dashboard for the M5Stack Tab5 (ESP32-P4).
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Yury Gitman and World Famous Electronics
 #
-# A remote display for M5StickS3 sensors, styled after the PulseSensor CYD
-# dashboard (pulsesensor.com/pages/cyd) and scaled up to 1280x720:
+# pulselink_tab5.py — PulseLink remote display for the M5Stack Tab5 (ESP32-P4).
+#
+# A remote display for M5StickS3 sensors running PulseLink, scaled to 1280x720:
 #
 #   +--------------------------------------------------------------+
 #   | PulseSensor.com        <3        QUALIFIED BEAT      1 LINKED |
@@ -14,7 +16,7 @@
 #   |   BPM 121   |   IBI 550 ms   |   SIG  ||||||||||              |
 #   +--------------------------------------------------------------+
 #
-# CYD semantics, kept faithfully:
+# Display semantics, kept in step with the StickS3 app:
 #   * waveform is YELLOW while acquiring, GREEN once the quality meter locks
 #   * dotted threshold line drawn at the sensor's live adaptive threshold
 #   * heart pulses red on every qualified beat
@@ -46,10 +48,10 @@ PKT_HZ_EXPECTED = 25           # link quality is measured against this
 APP_NAME = "PulseSensor.com"
 APP_SUB = "Tab5 remote display"
 
-# --- CYD palette ---
+# --- palette ---
 BG        = 0x000000
 GRID      = 0x1E4A32           # graph grid
-FRAME     = 0x37D871           # panel borders, CYD green
+FRAME     = 0x37D871           # panel borders
 TEXT      = 0xFFFFFF
 LABEL     = 0x9BB8A6
 GREEN     = 0x3BE86B           # locked waveform + meters
@@ -213,7 +215,7 @@ last_gy = GY + GH // 2
 # ============================== DRAWING ==============================
 
 def wave_color(s):
-    """CYD: yellow while acquiring, green once the quality meter locks."""
+    """Yellow while acquiring, green once the quality meter locks."""
     return GREEN if (s and s.state == LOCKED_STATE) else YELLOW
 
 def draw_heart(cx, cy, r, col):
@@ -331,7 +333,7 @@ def thresh_y(s):
     return clamp(mapv(t, lo, hi, GY + GH - 6, GY + 6), GY + 6, GY + GH - 6)
 
 def draw_annotations(s):
-    """THR readout + LED BEAT tag, CYD-style, inside the graph."""
+    """THR readout + LED BEAT tag inside the graph."""
     thr = "THR %d" % (s.thresh if s else 0)
     wpx = tw(thr, F_ANNOT)
     lcd.fillRect(GX + GW - wpx - 16, GY + 4, wpx + 14, th(F_ANNOT) + 4, BG)
@@ -484,7 +486,7 @@ draw_battery(batt_level, batt_v, batt_chg)
 draw_graph_frame()
 draw_annotations(None)
 draw_tiles(None, True)
-print("tab5_pulse: %dx%d CYD-style dashboard, waiting for sticks" % (W, H))
+print("pulselink_tab5: %dx%d dashboard, waiting for sticks" % (W, H))
 
 prev = None
 prev_beat = False
@@ -526,7 +528,7 @@ while True:
     if got and not stale:
         draw_wave(s)
 
-    # change-driven: only repaint what actually changed (CYD behaviour)
+    # change-driven: only repaint what actually changed
     cur = None if stale else (s.bpm, s.ibi, s.state, s.smax - s.smin)
     if cur != prev:
         draw_tiles(s, stale)

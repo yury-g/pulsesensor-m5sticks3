@@ -1,7 +1,7 @@
 #!/bin/zsh
-# provision.sh — turn a factory/blank M5StickS3 into a PulseSensor CYD-dashboard device.
+# provision.sh — turn a factory/blank M5StickS3 into a PulseLink device.
 # Expects the stick plugged in ALREADY IN DOWNLOAD MODE (hold button while plugging USB).
-#   ./provision.sh            flash UIFlow2 + deploy pulse_cyd.py as boot app + verify
+#   ./provision.sh            flash UIFlow2 + deploy pulselink.py as boot app + verify
 #   ./provision.sh --no-flash skip firmware flash (stick already runs UIFlow2)
 set -u
 setopt null_glob
@@ -12,7 +12,7 @@ DIR=/Users/mininarwhal/MStackSTICK-S3
 # underscore subcommands (flash_id, write_flash) - not the 5.x dashed names.
 ESPTOOL="/usr/bin/python3 -m esptool"
 FW=$DIR/uiflow_sticks3.bin
-APP=$DIR/pulse_cyd.py
+APP=$DIR/pulselink.py
 NOFLASH=${1:-}
 
 port() { local p=(/dev/cu.usbmodem*); [ ${#p} -gt 0 ] && echo $p[1]; }
@@ -81,8 +81,8 @@ sleep 4; wait_port 30
 echo "== verifying boot output (12s) =="
 OUT=$("$DIR/stick.sh" watch 12 2>&1)
 echo "$OUT" | tail -6
-if echo "$OUT" | grep -qE "pulse_cyd running|Q=[0-9]+/[0-9]+|NO SIGNAL|QUALIFIED"; then
-  echo "SUCCESS: stick boots into the PulseSensor CYD dashboard."
+if echo "$OUT" | grep -qE "pulselink running|Q=[0-9]+/[0-9]+|NO SIGNAL|QUALIFIED"; then
+  echo "SUCCESS: stick boots into PulseLink."
 else
   echo "WARN: no dashboard output seen at boot — UIFlow2 boot_option may be hijacking main.py."
   echo "      Check: stick.sh run with a script reading esp32.NVS('uiflow') boot_option."

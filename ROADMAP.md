@@ -1,7 +1,7 @@
 # PulseSensor on M5StickS3 — parked work
 
 Two features were built, verified on hardware, then deliberately removed from the
-shipping app (`pulse_cyd.py`) on 2026-07-16. Everything needed to reinstate them is
+shipping app (`pulselink.py`) on 2026-07-16. Everything needed to reinstate them is
 here. Both were removed for product reasons, not because they failed.
 
 ---
@@ -111,7 +111,7 @@ Also from the M5 docs: **the amplifier must be OFF to use the IR receiver.** If 
 ever added, `setPA(False)` first.
 
 ### The chime itself
-Rising four-note arpeggio from the CYD build, played on each qualified beat:
+Rising four-note arpeggio, played on each qualified beat:
 ```python
 CHIME = ((262, 58), (392, 66), (523, 82), (659, 118))  # (freq Hz, ms) = C4 G4 C5 E5
 ```

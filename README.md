@@ -1,177 +1,150 @@
-# PulseSensor on M5StickS3
+# PulseLink: Watch Your Heartbeat Come Alive on M5Stack StickS3
 
-A heart-rate monitor for the **M5StickS3** (ESP32-S3-PICO-1), written in MicroPython
-on the factory UIFlow2 firmware. A [pulsesensor.com](https://pulsesensor.com) analog
-PPG sensor feeds G2; the 240x135 screen shows a live waveform, BPM, and a signal
-coach with a confidence score.
+![PulseLink qualified-pulse interface](docs/hackster/screen-renders/sticks3-qualified-highres.png)
 
-**`v1-working` is the known-good state.** It is tagged, deployed, and verified on
-real hardware. If anything breaks, `git checkout v1-working` and redeploy.
+PulseLink turns the pocket-sized **M5Stack StickS3** into a self-contained
+PulseSensor display with a live waveform, honest signal-confidence coaching,
+and beat-synced BPM. No phone, cloud, router, breadboard, or second processor is
+required.
 
----
+- **Hackster build guide:**
+  [PulseLink: Watch Your Heartbeat on M5Stack StickS3](https://www.hackster.io/YuryG_PulseSensor/pulselink-watch-your-heartbeat-on-m5stack-sticks3-400fe5)
+- **M5Stack controller:**
+  [StickS3 documentation](https://docs.m5stack.com/en/core/StickS3)
+- **Sensor:**
+  [PulseSensor Amped kit](https://pulsesensor.com/products/pulse-sensor-amped)
 
-## Picking this up in a new chat
+## Why StickS3 is the heart of PulseLink
 
-Paste this to a fresh Claude Code session:
+The StickS3 combines the parts this project needs in one polished controller:
+an ESP32-S3, a sharp 1.14-inch display, battery power, programmable buttons,
+accessible GPIO, and UIFlow2 MicroPython. It samples the PulseSensor on GPIO2,
+runs adaptive beat detection and confidence logic, and renders the complete
+240 × 135 interface at the same time.
 
-> Clone `github.com/yury-g/pulsesensor-m5sticks3` (private) into `~/MStackSTICK-S3`,
-> check out the `v1-working` tag, and read `README.md` and `ROADMAP.md` before
-> doing anything. `pulse_cyd.py` is the app; it deploys to the stick as `main.py`
-> via `./stick.sh deploy pulse_cyd.py`. Do not use Arduino/C on this chip.
+The front button becomes **RESYNC**, the side button performs a detector reset,
+and the battery makes the experience portable. StickS3 also offers Wi-Fi, an
+IMU, audio, and a much broader development platform, but PulseLink deliberately
+keeps the verified build local and focused: sensing, interpretation, feedback,
+and display all happen on the controller.
 
-To get a stick back to this exact known-good state:
+## What makes PulseLink different
 
-```bash
-git clone https://github.com/yury-g/pulsesensor-m5sticks3.git ~/MStackSTICK-S3
-cd ~/MStackSTICK-S3
-git checkout v1-working
-./stick.sh deploy pulse_cyd.py     # stick already running UIFlow2
-# or, for a blank/bricked stick (needs uiflow_sticks3.bin, see below):
-./provision.sh
-```
+Many heartbeat projects jump directly from a noisy signal to a confident-looking
+number. PulseLink keeps the waveform visible and makes uncertainty part of the
+interface:
 
-Verify it worked — you want `rearms=0` and **no** `rst:0x8` reboot lines:
-
-```bash
-./stick.sh watch 20
-```
-
-## Wiring
-
-| PulseSensor | M5StickS3 |
+| State | Meaning |
 |---|---|
-| Signal (purple) | **G2** |
-| VCC (red) | **3V3** |
-| GND (black) | **GND** |
+| **Blue** | Collecting data; nothing trustworthy yet |
+| **Yellow** | A pulse-like waveform is present; confidence is building |
+| **Green** | The signal is qualified and BPM is ready |
 
-## Quick start
+The waveform, heart, confidence state, and BPM tile share this color language.
+Every accepted beat animates the heart and BPM tile. RESYNC lets the user retune
+detection to the signal already visible on screen.
 
-```bash
-./stick.sh status              # what's connected, is the REPL alive
-./stick.sh run pulse_cyd.py    # run from RAM in ~1s (does NOT persist)
-./stick.sh deploy pulse_cyd.py # make it the boot app (persists)
-./stick.sh watch 10            # stream serial output
-```
+## Hardware
 
-> **`run` is not proof.** `mpremote resume` reuses the REPL namespace, so a script
-> can pass under `run` and still crash on a cold boot. Always confirm with
-> `deploy` + `watch`.
+| Quantity | Component | Purpose |
+|---:|---|---|
+| 1 | M5Stack StickS3 | Samples, processes, and displays the signal |
+| 1 | [PulseSensor Amped kit](https://pulsesensor.com/products/pulse-sensor-amped) | Captures the optical pulse waveform |
 
-## Restoring a stick from scratch
+That is the complete electronics list. The PulseSensor kit's black, red, and
+purple leads plug directly onto the StickS3 header; no breadboard, adapter
+harness, or additional jumper wires are needed.
 
-`provision.sh` takes a blank or bricked stick to a finished device in one command:
-verifies the chip, flashes UIFlow2, waits out the first-boot format, sets the NVS
-boot option, deploys the app, and confirms it boots.
+### Wiring
 
-```bash
-./provision.sh              # full: flash firmware + deploy
-./provision.sh --no-flash   # skip the firmware step
-```
+Disconnect USB power before wiring.
 
-It needs `uiflow_sticks3.bin`, which is **not committed** (it is M5Stack's 8 MB
-binary). Fetch it once:
-
-```bash
-curl -s https://m5burner-api.m5stack.com/api/firmware | \
-  python3 -c "import json,sys; [print(f['file'],f['name']) for f in json.load(sys.stdin) if 'StickS3' in f.get('name','')]"
-# then:
-curl -L -o uiflow_sticks3.bin https://m5burner.m5stack.com/firmware/<file-from-above>
-```
-
-The stick must be **in download mode**: unplug it, then plug it back in while
-holding the side button.
-
----
-
-## What's in here
-
-| File | |
+| PulseSensor lead | StickS3 |
 |---|---|
-| **`pulse_cyd.py`** | **The app.** Deployed to the stick as `main.py`. |
-| `pulse_mono.py` | Rollback: earlier plain white/monochrome build. |
-| `pulse.py` | First simple version, kept for reference. |
-| `pulse-mock.html` | Browser mock running the *same* detector against a synthesized PPG. Open it locally to iterate on the UI without hardware. |
-| `stick.sh` | Dev loop: run / deploy / watch / status. |
-| `provision.sh` | One-command bring-up of a new stick. |
-| `ROADMAP.md` | Parked features (IMU motion gating, beat chime) with full hardware findings. |
-| `probe_imu.py`, `calib_motion.py`, `imu_check.py` | Hardware investigation tools. |
+| Signal / purple | **G2 / GPIO2** |
+| VCC / red | **3V3** |
+| GND / black | **GND** |
 
-## Buttons
+Power the PulseSensor from **3.3 V only** in this build. Do not connect it to
+5 V.
 
-| Button | |
+Before skin contact, apply the included transparent vinyl dot to the sensor face
+and completely insulate the electronics on the back. Do not place exposed
+electronics against skin.
+
+## Software quick start
+
+The verified build uses **UIFlow2 v2.4.9** on StickS3 and one readable
+MicroPython application: [`pulselink.py`](pulselink.py).
+
+1. Install or restore UIFlow2 v2.4.9 with M5Burner.
+2. Install Python 3 and `mpremote`:
+
+   ```bash
+   python3 -m pip install mpremote
+   ```
+
+3. Clone this repository and copy the application to the StickS3 as `main.py`:
+
+   ```bash
+   git clone https://github.com/yury-g/pulsesensor-m5sticks3.git
+   cd pulsesensor-m5sticks3
+   python3 -m mpremote connect auto fs cp pulselink.py :main.py
+   ```
+
+4. Reset the StickS3. PulseLink should start automatically.
+
+If UIFlow2 opens its launcher instead of `main.py`, set the UIFlow2 boot option
+to run the downloaded program, then reset again.
+
+## Using PulseLink
+
+Rest a fingertip lightly on the prepared PulseSensor and hold still while the
+detector builds confidence. Small changes in pressure or motion will be visible
+in the waveform.
+
+| Control | Action |
 |---|---|
-| **BtnA** (front, blue) | **RESYNC** — "look at THIS waveform, now." Retunes the threshold to the live signal, clears the stale interval gate and amplitude, and opens a 6 s fast-lock window so a clean wave locks in two beats instead of four. The coach flashes `RESYNC` to confirm the press. |
-| **BtnB** (side) | Full cold reset of the detector. |
+| Front blue button / BtnA | **RESYNC** — retune to the live waveform and open a short fast-lock period |
+| Side button / BtnB | Perform a full detector reset |
 
-Use RESYNC when the screen shows an obviously good pulse wave but the coach will
-not engage. That happens when a bad detection leaves `ibi_ms` large — the detector
-gates beats at 3/5 of it, so real beats get discarded — or leaves `amp` stale-low,
-so `qualify()` rejects everything. A plain re-arm did not clear either.
+## How it works
 
-## The screen
+The StickS3 samples the analog signal at 50 Hz and reduces its 12-bit ADC
+reading to the 10-bit range used by the detector. The detector follows the
+running peak and trough, places an adaptive threshold between them, and uses a
+refractory gate to prevent one physical pulse from being counted more than
+once.
 
-One colour language — waveform, heart, coach and tile borders always agree:
+Possible beats must fall within the educational demo's interval, rate, and
+amplitude limits. A confidence score rises for consistent beats and falls when
+the signal becomes uncertain. BPM appears only after the score passes the
+10-of-12 lock threshold, then uses up to ten recent qualified intervals for
+smoothing.
 
-| | |
-|---|---|
-| **Blue** | collecting; nothing trustworthy yet |
-| **Yellow** | locking on |
-| **Green** | full confidence |
+The current code corresponds to the real-hardware-verified `v1.1-resync` build.
+The finished application is [`pulselink.py`](pulselink.py). Earlier experiments
+and filenames remain available through the public Git history and tags.
 
-Yellow annotations over the graph (`THR`, beat ticks) are labels, not state.
+## Limits and safety
 
-Beat detection is the PulseSensor/CYD algorithm: adaptive threshold midway between
-the running peak and trough, rising-edge detection behind a 250 ms refractory plus a
-3/5-of-last-IBI gate, plausibility qualification (40-180 BPM, 333-1500 ms IBI,
-minimum amplitude), a ±3/−1 confidence counter that must reach 10/12 to lock, and
-classic `rate[]` averaging over the last 10 intervals for the displayed BPM.
+Motion and changing contact pressure can disrupt the optical signal. This
+project has not been compared against a calibrated reference instrument.
 
----
+**PulseLink is an educational biofeedback project. It is not a medical device
+and must not be used for diagnosis, treatment, or health decisions.**
 
-## Hard-won gotchas
+## Credits and disclosure
 
-These cost real time. Read before debugging.
+PulseLink is an original StickS3 and MicroPython implementation by Yury Gitman.
+It adapts beat-detection concepts from the MIT-licensed
+[PulseSensor Playground](https://github.com/WorldFamousElectronics/PulseSensorPlayground),
+whose copyright and license notice are preserved in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-- **Do NOT use Arduino/C on this chip.** Current cores (`m5stack:esp32@3.2.5`,
-  `esp32:esp32@3.3.10`) produce firmware that double-faults the instant any
-  interrupt fires on core 1 — even an empty sketch. MicroPython on factory UIFlow2
-  is the proven path.
-- **Boot hijack.** UIFlow2 runs its launcher instead of `main.py` unless NVS
-  `uiflow`/`boot_option` is `0`. Deploying `main.py` alone does nothing.
-  `provision.sh` sets it; `"Skip sync"` in the boot log confirms it.
-- **The LCD font is PROPORTIONAL, not a 6x8 grid.** At size 1 it is **15 px tall**
-  and `"PulseSensor"` is **92 px** wide, so size-4 digits are **60 px tall**. Lay
-  out with `lcd.textWidth()` / `lcd.fontHeight()` at runtime and keep a 5 px safe
-  edge. Never assume character cells.
-- **`lcd.print()` paints an opaque background box.** Anything drawn beforehand in
-  the same place is wiped out. Draw icons *after* text.
-- **Watchdog crash-loop** (`rst:0x8 TG1WDT_SYS_RST` repeating) means the main loop
-  never slept — if a frame costs ≥ `SAMPLE_MS`, an `if wait > 0: sleep` branch never
-  runs, the task WDT starves, and the board reboots forever. It *looks* like a
-  frozen UI. Always `time.sleep_ms(1)` unconditionally each iteration.
-- **esptool:** `~/Library/Arduino15` is a symlink to an external volume that is
-  often unmounted. Use `/usr/bin/python3 -m esptool` (v4.11), which takes
-  *underscore* syntax (`no_reset`, `watchdog_reset`, `flash_id`, `write_flash`).
-- **Serial is twitchy.** Opening the port can reset the stick; it then vanishes and
-  re-enumerates in 2–15 s. Poll before assuming it died. Never open the port from
-  two processes at once. In zsh, never glob `/dev/cu.usbmodem*` (nomatch aborts the
-  script; with `null_glob` it silently lists the *current directory*) — use
-  `ls /dev/ | grep '^cu\.usbmodem'`.
-- **Rescuing a crash-looping stick:** Ctrl-C over USB CDC *blocks* while the board
-  resets. Instead run esptool with a default reset to drop it into download mode,
-  then reflash.
+Disclosure: Yury is a co-founder of World Famous Electronics, the company that
+makes PulseSensor.
 
-## Hardware reference
+## License
 
-ESP32-S3-PICO-1 (LGA56) rev v0.2 · 8 MB flash · 8 MB PSRAM (AP_3v3 quad)
-
-| Peripheral | |
-|---|---|
-| Display | ST7789P3, 135x240, landscape at `setRotation(1)` |
-| IMU | BMI270 @ I2C `0x68` (`M5.Imu.getAccel()`, 56 µs/call) |
-| Audio | ES8311 codec `0x18` + AW8737 amp + 8 Ω 1 W speaker |
-| Power | M5PM1 `0x6e` (`M5.Power.getBatteryLevel()`, `isCharging()`) |
-| I2C bus | SDA `G47`, SCL `G48` |
-
-Audio note: `M5.Speaker.setPA(True)` is **required** or `tone()` is silent. The amp
-must be off to use the IR receiver.
+MIT. See [LICENSE](LICENSE).
