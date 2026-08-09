@@ -1,6 +1,6 @@
 # PulseLink: Watch Your Heartbeat Come Alive on M5Stack StickS3
 
-![PulseLink qualified-pulse interface](docs/hackster/screen-renders/sticks3-qualified-highres.png)
+![PulseLink worn on the wrist with the PulseSensor wrapped around a fingertip](docs/hackster/photos/pulselink-hero.jpg)
 
 PulseLink turns the pocket-sized **M5Stack StickS3** into a self-contained
 PulseSensor display with a live waveform, honest signal-confidence coaching,
@@ -13,6 +13,30 @@ required.
   [StickS3 documentation](https://docs.m5stack.com/en/core/StickS3)
 - **Sensor:**
   [PulseSensor Amped kit](https://pulsesensor.com/products/pulse-sensor-amped)
+
+## Wiring
+
+The PulseSensor kit plugs directly into the StickS3. The black lead connects to
+**GND**, while the paired red and purple connector plugs into the adjacent
+**3V3** and **G2** pins. No breadboard, adapter harness, or extra jumper wires
+are required.
+
+![Black PulseSensor ground lead aligned with the StickS3 GND pin](docs/hackster/photos/pulselink-wiring-ground.jpg)
+
+| PulseSensor lead | StickS3 |
+|---|---|
+| Signal / purple | **G2 / GPIO2** |
+| VCC / red | **3V3** |
+| GND / black | **GND** |
+
+![PulseSensor leads connected to the StickS3](docs/hackster/photos/pulselink-wiring-final.jpg)
+
+Disconnect USB power before wiring. Power the PulseSensor from **3.3 V only**
+in this build; do not connect it to 5 V.
+
+Before skin contact, apply the included transparent vinyl dot to the sensor face
+and completely insulate the electronics on the back. Do not place exposed
+electronics against skin.
 
 ## Why StickS3 is the heart of PulseLink
 
@@ -34,6 +58,8 @@ Many heartbeat projects jump directly from a noisy signal to a confident-looking
 number. PulseLink keeps the waveform visible and makes uncertainty part of the
 interface:
 
+![PulseLink qualified-pulse interface](docs/hackster/screen-renders/sticks3-qualified-highres.png)
+
 | State | Meaning |
 |---|---|
 | **Blue** | Collecting data; nothing trustworthy yet |
@@ -54,23 +80,6 @@ detection to the signal already visible on screen.
 That is the complete electronics list. The PulseSensor kit's black, red, and
 purple leads plug directly onto the StickS3 header; no breadboard, adapter
 harness, or additional jumper wires are needed.
-
-### Wiring
-
-Disconnect USB power before wiring.
-
-| PulseSensor lead | StickS3 |
-|---|---|
-| Signal / purple | **G2 / GPIO2** |
-| VCC / red | **3V3** |
-| GND / black | **GND** |
-
-Power the PulseSensor from **3.3 V only** in this build. Do not connect it to
-5 V.
-
-Before skin contact, apply the included transparent vinyl dot to the sensor face
-and completely insulate the electronics on the back. Do not place exposed
-electronics against skin.
 
 ## Software quick start
 
