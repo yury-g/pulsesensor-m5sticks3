@@ -100,6 +100,13 @@ Any received packet resets the strike count. Counters are on the developer
 dashboard as `link recovery`, because a silent recovery is as hard to diagnose
 as a silent failure.
 
+**Known benign false positive:** `stick.sh run <probe>` leaves the stick at the
+REPL with its STA *still associated*, so the Tab5 correctly sees a station and
+no traffic and starts rebuilding. Observed and expected. It is bounded (stops
+after strike 4) and clears the moment real traffic returns. If you see
+`socket rebuilt` in a log, check whether the stick was simply parked at the
+REPL before treating it as a fault.
+
 **Verified on hardware by creating the trigger condition** — a station that
 associates and then deliberately sends nothing. All four stages fired in order,
 and the link came back at `rate=25/s` afterwards.
@@ -315,6 +322,16 @@ trusted what it said. **Verify the stimulus before believing a measurement.**
   `THR` / `LED BEAT` annotations with it, which is the repaint path the
   change-driven rewrite touched. No crash, no leftover banner pixels.
   **This proves the receiver, not the button** — BtnA still needs a human.
+- `tools/multi_sensor_probe.py` — **written and run 2026-08-08, PASSED.**
+  There is only one physical stick here, so roadmap 4 would otherwise have
+  shipped having never seen a second device id. The id is just three bytes in
+  the packet, so one stick can present as several senders over the real radio.
+  Results: **`linked=3` sustained at `rate=66/s` with `bad=0`**, and the
+  12-distinct-id phase evicted stale entries instead of growing the roster
+  (`LINK: evicting d5513c (stale 25165ms) for b20014`). Free heap dipped ~30KB
+  for the extra histories and recovered.
+  **This proves the RECEIVER handles multiple ids. It does not prove two
+  physical sticks share the air — only two radios can prove that.**
 - `tools/sim_tab5.py` — host-side simulator and screen renderer. See above.
 - `tools/timing_matrix.py` — **written, never run.** Drives `timeit.py`'s
   primitives n times per scenario and aggregates min/median/max, which is what

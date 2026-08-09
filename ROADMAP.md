@@ -26,9 +26,12 @@ screen or physically turning the device — see "Needs hands" below.
    capacity nobody has told us. Reads through `batt_sample()`, so it does not
    inherit the gauge's half-scale flapping; the raw value is shown beside the
    filtered one so the filter can be seen working.
-4. **Multiple sensors.** ✅ Built. Up to 4 sticks, one row each, BPM and IBI
-   together in one window as asked. *Only ever exercised with one real stick —
-   the second sensor path is simulator-tested only.*
+4. **Multiple sensors.** ✅ Built **and verified over the real link** with
+   `tools/multi_sensor_probe.py`: `linked=3` sustained at `rate=66/s`, `bad=0`,
+   three populated rows. The roster is capped at 8 and evicts only stale
+   entries — a 12-id burst displaced stale ids instead of growing.
+   *Caveat: one physical stick presenting as several device ids proves the
+   receiver. It does not prove two radios sharing the air.*
 5. **App menu.** ✅ Built. Reaches every screen; the header icons are also
    direct tap targets.
 6. **FFT spectrum analyzer.** ✅ Built. 512-point radix-2, Hann-windowed,
