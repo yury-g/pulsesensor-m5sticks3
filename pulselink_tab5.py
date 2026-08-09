@@ -87,9 +87,22 @@ _ap = None
 rx_bad = 0                     # packets rejected by parse(), for verification
 
 def link_init():
+    """Bring up the SoftAP and the receive socket. Safe to call again.
+
+    Idempotence is not decoration: the stall watchdog calls this to recover a
+    wedged link, and an earlier version bound port 5005 while the previous
+    socket still held it. That failed EADDRINUSE and left the app with no
+    socket at all - the recovery path CAUSING the outage it exists to clear.
+    """
     global _sock, _ap
     try:
         import network, socket
+        if _sock is not None:
+            try:
+                _sock.close()
+            except Exception:
+                pass
+            _sock = None
         _ap = network.WLAN(network.AP_IF)
         _ap.active(True)
         try:
@@ -99,9 +112,12 @@ def link_init():
                 _ap.config(essid=LINK_SSID, password=LINK_PSK)
             except Exception:
                 _ap.config(essid=LINK_SSID)
-        _sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        _sock.bind(("0.0.0.0", LINK_PORT))
-        _sock.setblocking(False)
+        # Only publish the socket once it is fully bound and non-blocking; a
+        # half-configured one reaching link_poll() is worse than none.
+        _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        _s.bind(("0.0.0.0", LINK_PORT))
+        _s.setblocking(False)
+        _sock = _s
         try:
             ip = _ap.ifconfig()[0]
         except Exception:
@@ -128,6 +144,72 @@ def parse(d):
             "samples": (u16(10), u16(12)),
             "smin": u16(14), "smax": u16(16), "thresh": u16(18),
             "amp": u16(20), "ibi": u16(22)}
+
+# --- receiver-side stall watchdog -----------------------------------------
+# The SENDER has had a zombie detector since the ENOMEM stall was found: after
+# a couple of seconds of solid send failures it drops the association and
+# rejoins. The RECEIVER had no equivalent, so if the socket on this side ever
+# wedged there was nothing to recover it and the display sat there showing a
+# dead link forever.
+#
+# Observed once, and not reproduced in seven attempts across both restart
+# orders: rx frozen at 6 for over 100s while a freshly booted stick reported
+# itself associated and healthy, and only a Tab5 reboot cleared it. That is
+# thin evidence for a diagnosis, which is exactly why this is a recovery
+# mechanism rather than a fix - it does not claim to know the cause.
+#
+# It fires ONLY when the AP says a station is actually associated. An idle desk
+# with no stick powered on is silent for a correct reason, and rebuilding the
+# socket every few seconds because of that would be its own bug.
+RX_STALL_MS = 12000
+last_rx = 0
+sock_rebuilds = 0
+ap_restarts = 0
+_stall_strikes = 0
+
+def ap_stations():
+    """Number of associated stations, or -1 if the firmware will not say."""
+    try:
+        return len(_ap.status("stations"))
+    except Exception:
+        return -1
+
+def link_watchdog(now):
+    global _sock, last_rx, sock_rebuilds, ap_restarts, _stall_strikes
+    if time.ticks_diff(now, last_rx) < RX_STALL_MS:
+        return
+    n = ap_stations()
+    if n <= 0:
+        return                      # nothing associated: silence is correct
+    last_rx = now                   # one action per window, not per pass
+    _stall_strikes += 1
+    if _stall_strikes <= 3:
+        try:
+            import socket
+            if _sock is not None:
+                try:
+                    _sock.close()
+                except Exception:
+                    pass
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.bind(("0.0.0.0", LINK_PORT))
+            s.setblocking(False)
+            _sock = s
+            sock_rebuilds += 1
+            print("LINK: rx stalled, %d station(s) associated - socket "
+                  "rebuilt (#%d, strike %d)" % (n, sock_rebuilds,
+                                                _stall_strikes))
+        except Exception as ex:
+            _sock = None
+            print("LINK: socket rebuild FAILED (%s)" % ex)
+    elif _stall_strikes == 4:
+        # Bigger hammer, and a last resort: this drops every associated
+        # station and makes them all rejoin.
+        ap_restarts += 1
+        print("LINK: rx still stalled after %d rebuilds - restarting AP (#%d)"
+              % (sock_rebuilds, ap_restarts))
+        link_init()
+    # beyond strike 4, stop escalating and stop logging until traffic returns
 
 def link_poll():
     global rx_bad
@@ -476,11 +558,35 @@ class Stick:
 sticks = []
 primary = None                              # the one shown full screen
 
+STICK_MAX = 8                  # hard cap on tracked device ids
+
 def stick_for(dev):
+    """Find or create the Stick for a device id, with a bounded roster.
+
+    The device id is three bytes chosen by whatever is sending, and the AP
+    takes packets from anyone holding the PSK. Unbounded, a sender walking
+    through ids would mint a Stick each time - and each one carries a
+    HIST_MAX-sample history - until the heap ran out. So the roster is capped,
+    and a new id may only take the place of one that has already gone stale.
+    """
     global primary
     for s in sticks:
         if s.dev == dev:
             return s
+    if len(sticks) >= STICK_MAX:
+        now = time.ticks_ms()
+        victim, oldest = None, STALE_MS
+        for s in sticks:
+            age = time.ticks_diff(now, s.last)
+            if age > oldest:
+                victim, oldest = s, age
+        if victim is None:
+            return sticks[0]        # roster full of live sticks: ignore this id
+        print("LINK: evicting %s (stale %dms) for %s"
+              % (victim.dev.hex(), oldest, dev.hex()))
+        if primary is victim:
+            primary = None
+        sticks.remove(victim)
     s = Stick(dev)
     sticks.append(s)
     if primary is None:
@@ -1085,6 +1191,15 @@ def dev_draw(now):
     y += DEV_ROW_H
     row("d_rot", L, y, "rotation", "%d  (%s)"
         % (cur_rot, "auto" if AUTO_ROTATE else "fixed"))
+    y += DEV_ROW_H
+    n = ap_stations()
+    row("d_sta", L, y, "ap stations",
+        "?" if n < 0 else str(n), LABEL if n <= 0 else GREEN)
+    y += DEV_ROW_H
+    # A recovery nobody can see is as hard to diagnose as a silent failure.
+    row("d_rec", L, y, "link recovery",
+        "%d socket, %d ap restart" % (sock_rebuilds, ap_restarts),
+        YELLOW if (sock_rebuilds or ap_restarts) else LABEL)
 
     # right column: one block per stick that has ever been seen
     y = DEV_STICK_Y + th(F_SECT) + 8
@@ -1479,7 +1594,7 @@ except Exception:
 
 batt_level, batt_v, batt_chg = batt_sample()
 t_boot = time.ticks_ms()
-last_ui = last_wave = t_boot
+last_ui = last_wave = last_rx = t_boot
 go("main")
 
 print("pulselink_tab5: %dx%d dashboard, waiting for sticks" % (W, H))
@@ -1557,6 +1672,8 @@ while True:
     # were looking at another screen is worse than no counter at all.
     for p in link_poll():
         rx_count += 1
+        last_rx = now
+        _stall_strikes = 0          # traffic is flowing: rearm the watchdog
         s = stick_for(p["dev"])
         s.rx += 1
         s.bpm = p["bpm"]; s.ibi = p["ibi"]; s.quality = p["quality"]
@@ -1618,6 +1735,8 @@ while True:
 
     # --- draw whichever screen is up
     SCREENS[screen][1](now)
+
+    link_watchdog(now)
 
     # measured packet rate over a 1s window -> signal bars
     if time.ticks_diff(now, rate_mark) >= 1000:

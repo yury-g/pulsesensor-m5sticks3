@@ -70,6 +70,48 @@ the previous methodology could not have seen:
   itself, not the font/layout pass. Correct ordering, but do not expect time.
 - `rx_bad` counter; stat line is now `rx=N bad=N rate=N/s ...`.
 
+## Receiver-side stall watchdog (2026-08-08)
+
+**Observed once, never reproduced.** During a soak the Tab5 sat at `rx=6`,
+`rate=0/s` for over 100 s while the stick — freshly rebooted, `rearms=0` —
+reported `link=1`. Resetting the **stick** did not clear it; resetting the
+**Tab5** did, which puts the stuck state on the receiver.
+
+Seven attempts afterwards failed to reproduce it: `tab5_only` recovered 3/3
+(2.4–4.0 s from AP-up to first packet) and `stick_only` recovered 3/3
+(`rx` climbing at 25/s within seconds). So there is no diagnosis here, only a
+symptom — and the response is a **recovery mechanism, not a fix**.
+
+The asymmetry it closes is real regardless: the sender has had a zombie
+detector since the ENOMEM stall, and the receiver had nothing. A wedged socket
+on this side had no path back.
+
+`link_watchdog()` fires only when **`_ap.status("stations")` reports a station
+actually associated** — an idle desk with no stick is silent for a correct
+reason, and rebuilding the socket because of that would be its own bug. Then:
+
+| Strike | After | Action |
+|---|---|---|
+| 1–3 | 12 s each | rebuild the UDP socket |
+| 4 | 12 s | restart the AP (`link_init()`) |
+| 5+ | — | stop escalating, stop logging |
+
+Any received packet resets the strike count. Counters are on the developer
+dashboard as `link recovery`, because a silent recovery is as hard to diagnose
+as a silent failure.
+
+**Verified on hardware by creating the trigger condition** — a station that
+associates and then deliberately sends nothing. All four stages fired in order,
+and the link came back at `rate=25/s` afterwards.
+
+That test caught a bug in the escalation that would have been worse than the
+problem: `link_init()` bound port 5005 while the previous socket still held it,
+failed `EADDRINUSE`, and left the app with **no socket at all**. The recovery
+path caused the outage it exists to clear. `link_init()` is now idempotent —
+it closes any existing socket first and only publishes the new one once it is
+fully bound. **Any future recovery path must be tested by actually triggering
+it; this one passed review and code-read fine.**
+
 ## Measurement — READ THIS BEFORE COMPARING TO THE OLD BASELINE
 
 **The old baseline table is not comparable and should not be trusted as a
