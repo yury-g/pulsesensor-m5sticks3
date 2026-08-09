@@ -70,6 +70,27 @@ the previous methodology could not have seen:
   itself, not the font/layout pass. Correct ordering, but do not expect time.
 - `rx_bad` counter; stat line is now `rx=N bad=N rate=N/s ...`.
 
+## Endurance soak — 30 min, 2026-08-08, commit `925c196`
+
+Undisturbed, both devices, nothing attached to the ports but a passive reader.
+
+| Measure | Result |
+|---|---|
+| Duration | 1798 s, uptime monotonic 90 s → 1886 s (**no reboot**) |
+| Packets | 47,075 received, **`bad=0`** throughout |
+| Rate | 44,903 packets over 1796 s = **25.0/s** against 25/s expected |
+| Faults | **zero** — no `rst:`, traceback, stall, socket rebuild or AP restart |
+| Free heap | drift **−4,516 bytes** over 30 min |
+
+**No leak.** The heap drift is −0.019%, and the GC oscillation spread over the
+same window is 12,880 bytes — the drift is well inside the noise. Judge it that
+way rather than by eyeballing two numbers; a single low sample at the end of a
+run reads like a leak and usually is not.
+
+Note what this soak does **not** cover: it is a steady-state test with the link
+already up. The stall below happens at *reboot*, so a soak that never restarts
+the Tab5 will never see it, however long it runs.
+
 ## Receiver-side stall watchdog (2026-08-08)
 
 **Reproducible but intermittent: roughly 1 in 6 Tab5 reboots.** After the Tab5
