@@ -72,19 +72,40 @@ the previous methodology could not have seen:
 
 ## Receiver-side stall watchdog (2026-08-08)
 
-**Observed once, never reproduced.** During a soak the Tab5 sat at `rx=6`,
-`rate=0/s` for over 100 s while the stick — freshly rebooted, `rearms=0` —
-reported `link=1`. Resetting the **stick** did not clear it; resetting the
-**Tab5** did, which puts the stuck state on the receiver.
+**Reproducible but intermittent: roughly 1 in 6 Tab5 reboots.** After the Tab5
+restarts, the stick associates (the AP reports the station) and the Tab5 then
+receives either nothing or a few dozen packets and stops. Without a watchdog
+this is **permanent** — observed once sitting at `rx=6, rate=0/s` for over
+100 s, and only a second Tab5 reboot cleared it.
 
-Seven attempts afterwards failed to reproduce it: `tab5_only` recovered 3/3
-(2.4–4.0 s from AP-up to first packet) and `stick_only` recovered 3/3
-(`rx` climbing at 25/s within seconds). So there is no diagnosis here, only a
-symptom — and the response is a **recovery mechanism, not a fix**.
+What the evidence supports, and what it does not:
 
-The asymmetry it closes is real regardless: the sender has had a zombie
-detector since the ENOMEM stall, and the receiver had nothing. A wedged socket
-on this side had no path back.
+- The stuck state is on the **receiver**. Resetting the stick does not clear
+  it; resetting the Tab5 does.
+- It is **not** a serial/tooling artefact. It reproduces with nothing attached
+  to the port during boot (`rx=31, rate=0/s`).
+- `rx` is often **non-zero** before it stops (31, 57, 6). The socket works
+  briefly and *then* dies, which argues against a simple "bound before the
+  interface was ready" story and suggests something reconfigures the netif
+  shortly after the station associates.
+- Rebuilding the socket clears **some** stalls outright and does nothing for
+  others — one run took three rebuilds with no effect and only returned after
+  the AP restart. So the socket is not always the wedged component.
+
+**No root cause established.** What is in the tree is a recovery mechanism, not
+a fix, and it should not be described as one. The asymmetry it closes is real
+regardless: the sender has had a zombie detector since the ENOMEM stall, and
+the receiver had nothing — a wedged link on this side had no path back.
+
+One evidence-based improvement did land in `link_init()`: it now waits for the
+AP netif to actually have an address before binding, instead of binding
+straight after `config()`. That is a genuine race whatever else is going on.
+
+**Do not read a run of clean reboots as proof.** At a ~1-in-6 rate, eight clean
+runs in a row is entirely consistent with the fault still being there — and
+eight clean runs is exactly what the current build produced. Cumulatively since
+the `link_init()` change: **2 stalls in 18 reboots**, both recovered
+automatically.
 
 `link_watchdog()` fires only when **`_ap.status("stations")` reports a station
 actually associated** — an idle desk with no stick is silent for a correct
@@ -92,9 +113,17 @@ reason, and rebuilding the socket because of that would be its own bug. Then:
 
 | Strike | After | Action |
 |---|---|---|
-| 1–3 | 12 s each | rebuild the UDP socket |
-| 4 | 12 s | restart the AP (`link_init()`) |
-| 5+ | — | stop escalating, stop logging |
+| 1–2 | 5 s each | rebuild the UDP socket |
+| 3 | 5 s | restart the AP (`link_init()`) |
+| 4+ | — | stop escalating, stop logging |
+
+5 s, not 12 s: normal traffic is 25 packets/s, so five seconds of total silence
+from an *associated* station is already deeply abnormal, and the wait is dead
+screen time. Escalation at strike 3 rather than 4 because rebuilding the socket
+has already been observed to fail twice in a row — there is no point spending a
+third window on a remedy that is not working. Worst case is now ~15 s of blank
+display instead of the 24–36 s measured at the old settings, or forever with no
+watchdog at all.
 
 Any received packet resets the strike count. Counters are on the developer
 dashboard as `link recovery`, because a silent recovery is as hard to diagnose

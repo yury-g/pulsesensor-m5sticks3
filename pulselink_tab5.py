@@ -112,16 +112,35 @@ def link_init():
                 _ap.config(essid=LINK_SSID, password=LINK_PSK)
             except Exception:
                 _ap.config(essid=LINK_SSID)
+        # WAIT for the AP netif to actually have its address before binding.
+        # Binding straight after config() RACES the interface coming up: the
+        # socket attaches to a netif state that never delivers, and the failure
+        # is silent and total - the AP looks healthy, the stick associates and
+        # reports link=1, and not one packet is ever received.
+        #
+        # Measured, not guessed. A soak reproduced it: AP up at t=8.5s, rx
+        # frozen at 0 for 30s, then the stall watchdog rebuilt the socket at
+        # t=42.7s and traffic resumed within one stat interval. Rebuilding the
+        # socket was the whole cure, which is what points at the bind.
+        ip = "0.0.0.0"
+        _t0 = time.ticks_ms()
+        while time.ticks_diff(time.ticks_ms(), _t0) < 5000:
+            try:
+                ip = _ap.ifconfig()[0]
+            except Exception:
+                ip = "0.0.0.0"
+            if ip and ip != "0.0.0.0":
+                break
+            time.sleep_ms(50)
+        if not ip or ip == "0.0.0.0":
+            print("LINK: AP had no address after 5s - binding anyway")
+
         # Only publish the socket once it is fully bound and non-blocking; a
         # half-configured one reaching link_poll() is worse than none.
         _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         _s.bind(("0.0.0.0", LINK_PORT))
         _s.setblocking(False)
         _sock = _s
-        try:
-            ip = _ap.ifconfig()[0]
-        except Exception:
-            ip = "?"
         print("LINK: SoftAP '%s' at %s, udp %d" % (LINK_SSID, ip, LINK_PORT))
         return True
     except Exception as ex:
@@ -161,7 +180,13 @@ def parse(d):
 # It fires ONLY when the AP says a station is actually associated. An idle desk
 # with no stick powered on is silent for a correct reason, and rebuilding the
 # socket every few seconds because of that would be its own bug.
-RX_STALL_MS = 12000
+# 5s, not 12s. Normal traffic is 25 packets/s, so five seconds of total silence
+# from an ASSOCIATED station is already deeply abnormal - there is nothing to
+# gain by waiting longer, and the wait is dead screen time. Measured: at 12s
+# the observed stalls cost 24-36s of blank display before recovery.
+# A rebuild is cheap and invisible; the worst it costs is the couple of packets
+# in flight while it happens, out of 25 per second.
+RX_STALL_MS = 5000
 last_rx = 0
 sock_rebuilds = 0
 ap_restarts = 0
@@ -183,7 +208,12 @@ def link_watchdog(now):
         return                      # nothing associated: silence is correct
     last_rx = now                   # one action per window, not per pass
     _stall_strikes += 1
-    if _stall_strikes <= 3:
+    # Two socket rebuilds, then the AP. Measured: rebuilding the socket clears
+    # some stalls outright and does nothing at all for others - one run took
+    # three rebuilds with no effect and only came back after the AP restart. So
+    # there is no point spending three windows on a remedy that has already
+    # failed twice; escalating at strike 3 halves the worst-case dead screen.
+    if _stall_strikes <= 2:
         try:
             import socket
             if _sock is not None:
@@ -202,7 +232,7 @@ def link_watchdog(now):
         except Exception as ex:
             _sock = None
             print("LINK: socket rebuild FAILED (%s)" % ex)
-    elif _stall_strikes == 4:
+    elif _stall_strikes == 3:
         # Bigger hammer, and a last resort: this drops every associated
         # station and makes them all rejoin.
         ap_restarts += 1
