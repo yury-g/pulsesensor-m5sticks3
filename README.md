@@ -1,9 +1,6 @@
 # PulseLink: Watch Your Heartbeat Come Alive on M5Stack StickS3
 
-![PulseLink acquiring a signal and locking onto a qualified pulse](docs/hackster/screen-renders/sticks3-acquire-to-lock.svg)
-
-*Acquiring to locked: the trace runs yellow while the detector builds
-confidence, then turns green. Software render with simulated data.*
+![PulseLink worn on the wrist with the PulseSensor wrapped around a fingertip](docs/hackster/photos/pulselink-hero.jpg)
 
 PulseLink turns the pocket-sized **M5Stack StickS3** into a self-contained
 PulseSensor display with a live waveform, honest signal-confidence coaching,
@@ -16,8 +13,6 @@ required.
   [StickS3 documentation](https://docs.m5stack.com/en/core/StickS3)
 - **Sensor:**
   [PulseSensor Amped kit](https://pulsesensor.com/products/pulse-sensor-amped)
-
-![PulseLink worn on the wrist with the PulseSensor wrapped around a fingertip](docs/hackster/photos/pulselink-hero.jpg)
 
 ## Wiring
 
@@ -63,21 +58,13 @@ Many heartbeat projects jump directly from a noisy signal to a confident-looking
 number. PulseLink keeps the waveform visible and makes uncertainty part of the
 interface:
 
-![PulseLink searching for a stable signal](docs/hackster/screen-renders/sticks3-searching-highres.png)
-
-*Before a finger is on the sensor, the screen stays blue and refuses to show a
-number. Software render with simulated data.*
+![PulseLink qualified-pulse interface](docs/hackster/screen-renders/sticks3-qualified-highres.png)
 
 | State | Meaning |
 |---|---|
 | **Blue** | Collecting data; nothing trustworthy yet |
 | **Yellow** | A pulse-like waveform is present; confidence is building |
 | **Green** | The signal is qualified and BPM is ready |
-
-![PulseLink qualified-pulse interface](docs/hackster/screen-renders/sticks3-qualified-highres.png)
-
-*Locked on: the waveform is green, BPM is visible, and confidence is 100%.
-Software render with simulated data.*
 
 The waveform, heart, confidence state, and BPM tile share this color language.
 Every accepted beat animates the heart and BPM tile. RESYNC lets the user retune
@@ -129,11 +116,6 @@ in the waveform.
 |---|---|
 | Front blue button / BtnA | **RESYNC** — retune to the live waveform and open a short fast-lock period |
 | Side button / BtnB | Perform a full detector reset |
-
-![PulseLink interface during the beat flash](docs/hackster/screen-renders/sticks3-heartbeat-highres.png)
-
-*On every accepted beat, the BPM tile inverts and the heart swells. Software
-render with simulated data.*
 
 ## How it works
 
