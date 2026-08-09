@@ -1365,14 +1365,20 @@ def sensors_draw(now):
         vy = y + 10 + th(SEN_F_LBL) + 4
         bpm = str(st.bpm) if (live and st.bpm) else "--"
         ibi = str(st.ibi) if (live and st.ibi) else "--"
+        # Values are RIGHT-aligned to a fixed edge and the unit sits just past
+        # it. Left-aligning them meant the unit had to be parked where a
+        # four-digit number would end, so "72" left a visible hole - and
+        # tracking the actual width instead would make the unit jitter every
+        # time the value gained or lost a digit.
+        vw = tw("8888", SEN_F_VAL)
+        ly = vy + th(SEN_F_VAL) - th(SEN_F_LBL) - 4      # sit on the baseline
+        xb = L + 30 + vw
+        xi = L + (W - 2 * L) // 2 + vw
         if changed("sen%dv" % i, (bpm, ibi, col)):
-            field("sen%dbp" % i, L + 30, vy, bpm, SEN_F_VAL, col, BG)
-            field("sen%dbl" % i, L + 30 + tw("8888", SEN_F_VAL) + 12, vy,
-                  "BPM", SEN_F_LBL, LABEL, BG)
-            xi = W // 2
-            field("sen%dib" % i, xi, vy, ibi, SEN_F_VAL, col, BG)
-            field("sen%dil" % i, xi + tw("8888", SEN_F_VAL) + 12, vy,
-                  "IBI ms", SEN_F_LBL, LABEL, BG)
+            field("sen%dbp" % i, 0, vy, bpm, SEN_F_VAL, col, BG, right=xb)
+            field("sen%dbl" % i, xb + 14, ly, "BPM", SEN_F_LBL, LABEL, BG)
+            field("sen%dib" % i, 0, vy, ibi, SEN_F_VAL, col, BG, right=xi)
+            field("sen%dil" % i, xi + 14, ly, "IBI ms", SEN_F_LBL, LABEL, BG)
 
 register("sensors", sensors_enter, sensors_draw)
 
