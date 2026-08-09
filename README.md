@@ -58,7 +58,7 @@ Many heartbeat projects jump directly from a noisy signal to a confident-looking
 number. PulseLink keeps the waveform visible and makes uncertainty part of the
 interface:
 
-![PulseLink qualified-pulse interface](docs/hackster/screen-renders/sticks3-qualified-highres.png)
+![PulseLink signal acquisition and qualification animation](docs/hackster/screen-renders/sticks3-acquire-to-lock.svg)
 
 | State | Meaning |
 |---|---|
