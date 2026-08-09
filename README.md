@@ -13,6 +13,9 @@ required.
   [StickS3 documentation](https://docs.m5stack.com/en/core/StickS3)
 - **Sensor:**
   [PulseSensor Amped kit](https://pulsesensor.com/products/pulse-sensor-amped)
+- **Room-scale remote display:**
+  [M5Stack Tab5 companion](#companion-the-m5stack-tab5-remote-display) — live
+  waveform, spectrum analyzer, and multi-sensor view over a private Wi-Fi link
 
 ## Why StickS3 is the heart of PulseLink
 
@@ -125,6 +128,55 @@ smoothing.
 The current code corresponds to the real-hardware-verified `v1.1-resync` build.
 The finished application is [`pulselink.py`](pulselink.py). Earlier experiments
 and filenames remain available through the public Git history and tags.
+
+## Companion: the M5Stack Tab5 remote display
+
+[`pulselink_tab5.py`](pulselink_tab5.py) turns an **M5Stack Tab5** (ESP32-P4,
+1280 × 720) into a room-scale remote display for one or more StickS3 sensors.
+
+The detector still runs on the stick. The Tab5 only renders what arrives — over
+a private **SoftAP + UDP** link the two ends set up between themselves, with no
+router, no cloud, and nothing for the user to configure. (The P4 has no radio of
+its own and its Wi-Fi co-processor build has no ESP-NOW, so the link is UDP over
+a SoftAP the Tab5 hosts.)
+
+![PulseLink Tab5 dashboard](docs/sim/tab5-main.png)
+
+BPM and IBI share one window at a 104 px face — readable across a room — beside
+a wider SIG panel carrying the signal coach. The waveform keeps the same colour
+language as the stick: yellow while acquiring, green once the quality meter
+locks.
+
+### Tapping through
+
+The header icons are the buttons. Tap the link bars, the battery, the title,
+the waveform, or the BPM panel.
+
+| | |
+|---|---|
+| ![Apps menu](docs/sim/tab5-menu.png)<br>**APPS** — every screen, one tap away | ![Sensors](docs/sim/tab5-sensors.png)<br>**SENSORS** — up to 4 sticks, BPM and IBI together on each row |
+| ![Spectrum](docs/sim/tab5-fft.png)<br>**SPECTRUM** — 512-point FFT of the live PPG, harmonics marked `f`/`2x`/`3x`, axis in BPM | ![Developer](docs/sim/tab5-dev.png)<br>**DEVELOPER** — packet rate, accepted/rejected counters, per-stick ids, uptime, heap |
+| ![Power](docs/sim/tab5-power.png)<br>**POWER** — charge, cell voltage, current, and a runtime estimate from the *measured* discharge slope | ![Portrait](docs/sim/tab5-rot0.png)<br>**AUTO-ROTATE** — the IMU picks the orientation and the whole layout is recomputed |
+
+### About these images
+
+**They are simulator renders, not device photographs or framebuffer captures.**
+They come from [`tools/sim_tab5.py`](tools/sim_tab5.py), which stubs the M5 API
+and runs the real application source unmodified.
+
+The distinction is worth stating precisely, because half of it is trustworthy
+and half is not:
+
+- **Layout is real.** The simulator reproduces the font metrics measured on the
+  actual panel, so the app's `fit()` logic selects exactly the faces the device
+  selects. Positions, sizes and fit decisions are the device's.
+- **Glyph rendering is approximate.** Text is drawn with Pillow and DejaVuSans,
+  not the panel's own font engine. Letterforms and antialiasing differ.
+
+All values shown are **synthesised** — a clean sinusoidal PPG with a dicrotic
+notch. No physiological measurement is represented. Every screen has also been
+painted once on real Tab5 hardware without error. Regenerate with
+`./tools/sim_tab5.py`; see [`docs/sim/`](docs/sim/) for details.
 
 ## Limits and safety
 
