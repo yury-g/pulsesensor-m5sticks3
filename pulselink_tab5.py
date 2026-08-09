@@ -919,8 +919,10 @@ def main_enter():
     hit(BATT_X - 14, 0, BATT_W + 34, BATT_Y + BATT_H + 14, "power")
     hit(L - 8, 0, tw(APP_NAME, F_TITLE) + 24, HDR_H - 4, "menu")
     hit(GX, GY, GW, GH, "fft")          # the waveform opens its spectrum
-    if len(sticks) > 1:
-        hit(VIT_X, TILE_Y, VIT_W, TILE_H, "sensors")
+    # Registered unconditionally. Gating this on "more than one stick" meant
+    # the target depended on how many sticks had joined at the instant this
+    # screen was entered - so a stick that arrived later never got one.
+    hit(VIT_X, TILE_Y, VIT_W, TILE_H, "sensors")
 
     # The FIFO kept filling while another screen was up; draining it here would
     # dump seconds of backlog across the graph in one frame.
@@ -1274,6 +1276,7 @@ N_FFT = 512
 FFT_MS = 1500
 BPM_AXIS_MAX = 240             # 4Hz: above any plausible heart rate
 FFT_SELFTEST = True            # time + verify one transform at boot
+SCREEN_SELFTEST = False        # paint every screen once at boot; see BOOT
 
 _tw_re = None
 _tw_im = None
@@ -1498,6 +1501,22 @@ try:
 except Exception as _ex:
     btn_escape = False
     print("INPUT: BtnPWR escape unavailable (%s) - back chip only" % _ex)
+
+# Every sub-screen is reachable only by TAPPING the panel, so on a desk far
+# from the device they are unverifiable. tools/sim_tab5.py covers them, but it
+# stubs the LCD - a method that exists in the stub and not in this firmware
+# would pass the simulator and crash the moment a user tapped. Flipping this on
+# paints each screen once on the real panel and reports what happened.
+# Left OFF by default: it flashes every screen at the user on every boot.
+if SCREEN_SELFTEST:
+    for _name in sorted(SCREENS):
+        try:
+            go(_name)
+            SCREENS[_name][1](time.ticks_ms())
+            print("SELFTEST: %-8s ok (%d hit regions)" % (_name, len(_hits)))
+        except Exception as _ex:
+            print("SELFTEST: %-8s RAISED %r" % (_name, _ex))
+    go("main")
 
 # One FFT at boot, timed. The spectrum screen is only reachable by TAPPING the
 # panel, so without this nobody finds out how long the transform takes on this

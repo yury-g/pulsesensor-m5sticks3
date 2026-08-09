@@ -204,6 +204,58 @@ SIG's expense before a larger face can be selected.
   **Anything reading power must go through `batt_sample()`, not `M5.Power`.**
 - Link bars come from **measured packet rate**; the AP exposes no RSSI.
 
+## Roadmap build-out 2026-08-08 (commit `d235c76`)
+
+Roadmap items 1–7 are implemented. See `ROADMAP.md` for per-item status and
+`docs/sim/` for what each screen looks like. Three structural things landed
+first, because nothing else could work without them:
+
+- **`layout()`** — every derived constant is recomputed on demand instead of
+  once at import. Auto-rotate is impossible until this moves: a fixed-at-boot
+  geometry is wrong the instant the screen turns. **Nothing outside `layout()`
+  may cache geometry.**
+- **Touch** — `M5.update()` was never called by this app; nothing polled the
+  panel or the buttons. It now runs exactly once per loop pass (twice eats
+  button edges). Taps fire on **release**, not touch-down.
+- **Screen registry** — a screen is `(enter, draw, tap)` registered by name.
+  `go()` clears the whole field cache, because the change-driven painters
+  compare against what they last drew and after a screen change that memory
+  describes pixels that no longer exist.
+
+Measured on hardware: **512-point FFT = 220 ms** on the P4. That is why it runs
+at most every 1500 ms and only while the spectrum screen is showing.
+
+## The simulator — how the touch screens got tested at all
+
+`tools/sim_tab5.py` stubs the M5 API, runs the real `pulselink_tab5.py` source
+unmodified up to its main loop, and renders every screen to PNG.
+
+**This is not a nicety.** Every sub-screen is reachable only by tapping the
+panel, so working remotely they were unverifiable — the only available evidence
+would have been "it compiled". It has already caught a zero-width-field crash
+and an axis label running off the bottom of the panel.
+
+Fidelity, and the two halves differ:
+
+- **Measurement is device-accurate** — it reproduces the measured panel metrics
+  (see FONT FACTS), so `fit()` picks exactly the face the device picks.
+  `DejaVu18`/`DejaVu12` are interpolated and the tool says so on every run.
+- **Rendering is approximate** — Pillow glyphs at a matched size. Trust it for
+  *does it fit / overlap / throw*, not for *is this the exact pixel*.
+
+**A simulator can only prove what it models.** It stubs the LCD, so a method
+present in the stub but absent from this firmware would pass the sim and crash
+on a real tap. `SCREEN_SELFTEST` (off by default, in `pulselink_tab5.py`)
+exists for exactly that: flip it on and every screen is painted once on the
+real panel at boot, with the result printed. It has been run and all six pass.
+
+Two of the bugs the simulator "found" were its own — a phase discontinuity in
+the FFT window, and one phase counter shared across sticks which halved each
+stick's effective sample rate. Both made the analyzer report 146 BPM for a
+72 BPM signal, and both looked exactly like an app bug. The FFT self-test on
+pure tones is what separated them: it proved the transform before anything
+trusted what it said. **Verify the stimulus before believing a measurement.**
+
 ## Test tooling
 
 - `tools/malformed_probe.py` — **run 2026-08-08, PASSED.** Runs on the stick
@@ -221,6 +273,12 @@ SIG's expense before a larger face can be selected.
   `THR` / `LED BEAT` annotations with it, which is the repaint path the
   change-driven rewrite touched. No crash, no leftover banner pixels.
   **This proves the receiver, not the button** — BtnA still needs a human.
+- `tools/sim_tab5.py` — host-side simulator and screen renderer. See above.
+- `tools/timing_matrix.py` — **written, never run.** Drives `timeit.py`'s
+  primitives n times per scenario and aggregates min/median/max, which is what
+  the "run n>=10 for a real verdict" note above actually needs. Roughly 25 min
+  per arm at n=10; answering the 1s-vs-3s retry-ceiling question means running
+  both arms (flip `LINK_RETRY_MAX_MS` in `pulselink.py` between them).
 - `tools/timeit.py` — dual-serial timing harness (see above). It is in the repo
   now; the older note calling it `scratchpad/timeit.py` was stale.
 

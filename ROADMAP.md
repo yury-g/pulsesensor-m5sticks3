@@ -2,31 +2,51 @@
 
 ## Public roadmap — planned for PulseLink / Tab5
 
-Requested 2026-08-08. Not started; listed in priority order as given.
+Requested 2026-08-08. Items 1–7 were **built the same day** (commit `d235c76`).
 
-1. **Auto-rotate.** The Tab5 senses its own physical orientation and always
-   presents the screen upright, never upside down.
-2. **Wireless icon → developer dashboard.** Click through the link/signal icon
-   to a detailed screen with everything a developer or DIY user wants: packet
-   rate, per-stick MACs, dropped/rejected counts, RSSI if it ever becomes
-   available, protocol version, uptime.
-3. **Battery icon → power-management dashboard.** Full power screen with the
-   most-requested features for a device like this: state of charge, estimated
-   runtime remaining, charge/discharge rate, cell voltage. Use graphs and
-   gauges for anything that changes often.
-   *Prerequisite now met:* the gauge's half-scale misread is filtered in
-   `batt_sample()`, so a reading can be trusted. Anything built here must go
-   through that filter, not `M5.Power` directly — the raw gauge still flaps
-   between `100%(8393mV)` and `0%(~4360mV)` roughly every 5s.
-4. **Multiple sensors.** Support 2–4 PulseSensors across multiple StickS3s in
-   any combination. Show BPM and IBI for a sensor together in one window.
-5. **App menu.** A menu to reach more apps on the device.
-6. **FFT spectrum analyzer.** An app running FFT over the live PPG data,
-   labelling repeating harmonics and marking time in times/second.
-7. **Room to grow.** Make space to port more projects onto the device, so the
-   PulseSensor(s) plug into a wider PPG ecosystem.
+**Status honestly stated:** all seven render correctly in `tools/sim_tab5.py`,
+and every screen has been painted once on the real panel without raising (the
+`SCREEN_SELFTEST` pass). What has **not** happened is a human tapping the
+screen or physically turning the device — see "Needs hands" below.
+
+1. **Auto-rotate.** ✅ Built. Gravity from `M5.Imu.getAccel()` picks the
+   rotation; `layout()` recomputes every derived constant and the current
+   screen is rebuilt. Needs 8 agreeing samples (~1.6 s) before it turns, and
+   ignores the device lying flat. **The gravity→rotation table is calibrated
+   from a single measured reading** — if the screen comes up upside down,
+   `ROT_FROM_GRAVITY` is the one thing to change.
+2. **Wireless icon → developer dashboard.** ✅ Built. Packet rate against
+   expected, accepted/rejected counters, per-stick device ids and last-seen
+   ages, protocol version, endpoint, uptime, free heap, rotation. RSSI is
+   shown as *unavailable, with the reason* — a SoftAP exposes association
+   state, not signal strength.
+3. **Battery icon → power-management dashboard.** ✅ Built. Charge, pack and
+   per-cell voltage, current, USB rail, a 15-minute state-of-charge graph, and
+   a runtime estimate **from the measured SOC slope** rather than a datasheet
+   capacity nobody has told us. Reads through `batt_sample()`, so it does not
+   inherit the gauge's half-scale flapping; the raw value is shown beside the
+   filtered one so the filter can be seen working.
+4. **Multiple sensors.** ✅ Built. Up to 4 sticks, one row each, BPM and IBI
+   together in one window as asked. *Only ever exercised with one real stick —
+   the second sensor path is simulator-tested only.*
+5. **App menu.** ✅ Built. Reaches every screen; the header icons are also
+   direct tap targets.
+6. **FFT spectrum analyzer.** ✅ Built. 512-point radix-2, Hann-windowed,
+   harmonics marked `f`/`2x`/`3x`, x-axis in BPM and the fundamental reported
+   in both Hz and BPM. **Measured at 220 ms on the P4**, recomputed at most
+   every 1.5 s and only while that screen is showing.
+7. **Room to grow.** ✅ The screen registry is this: a screen is three
+   functions registered by name, and `layout()` means a new one inherits
+   correct geometry in any orientation.
 8. **Consider a ground-up rewrite** once the current build has survived a week
-   of real user testing.
+   of real user testing. — not started, and the screen framework above is a
+   deliberate argument against needing one.
+
+### Needs hands before any of this is "done"
+
+- Tap each header icon and each menu row on the real panel.
+- Physically rotate the device through all four orientations.
+- Run a second stick to exercise the multi-sensor path for real.
 
 ---
 
