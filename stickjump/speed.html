@@ -1,0 +1,172 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>StickJump — link speed test</title>
+<style>
+  :root { --ink:#e8eef7; --dim:#8fa3bd; --panel:#141c28; --line:#22304a; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; min-height:100%; background:#0a0f16; color:var(--ink);
+              font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  body { max-width:760px; margin:0 auto; padding:32px 20px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  p.sub { color:var(--dim); margin:0 0 22px; }
+  button { font:600 15px/1 inherit; padding:11px 18px; border-radius:9px; border:0;
+           background:#2f7ef7; color:#fff; cursor:pointer; margin-right:8px; }
+  button:hover:not(:disabled) { background:#4a90ff; }
+  button:disabled { background:#2a3546; color:#6b7a8f; cursor:default; }
+  #pill { display:inline-block; padding:7px 13px; border-radius:999px; background:var(--panel);
+          color:var(--dim); font-weight:600; font-size:13px; }
+  #pill.on { background:#0f3d24; color:#4ade80; }
+  #pill.err { background:#3d1616; color:#f87171; }
+  .cards { display:flex; gap:12px; flex-wrap:wrap; margin:24px 0 8px; }
+  .card { flex:1 1 150px; background:var(--panel); border-radius:11px; padding:14px 16px; }
+  .card .k { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+  .card .v { font-size:26px; font-weight:700; margin-top:4px; }
+  .card .u { font-size:13px; color:var(--dim); font-weight:600; }
+  table { width:100%; border-collapse:collapse; margin-top:18px; font-variant-numeric:tabular-nums; }
+  th,td { text-align:right; padding:9px 10px; border-bottom:1px solid var(--line); }
+  th:first-child, td:first-child { text-align:left; }
+  th { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+  tr.running td { color:#fbbf24; }
+  #log { margin-top:18px; color:var(--dim); font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+         white-space:pre-wrap; }
+</style>
+
+<h1>StickJump — link speed test</h1>
+<p class="sub">Measures what the BLE link between the M5StickS3 and this page actually delivers:
+round-trip latency, and throughput across packet sizes.</p>
+
+<button id="connect">Connect stick</button>
+<button id="run" disabled>Run full test</button>
+<span id="pill">not connected</span>
+
+<div class="cards">
+  <div class="card"><div class="k">Round trip</div>
+    <div class="v"><span id="rtt">—</span> <span class="u">ms</span></div></div>
+  <div class="card"><div class="k">Peak throughput</div>
+    <div class="v"><span id="peak">—</span> <span class="u">kB/s</span></div></div>
+  <div class="card"><div class="k">Packet loss</div>
+    <div class="v"><span id="loss">—</span> <span class="u">%</span></div></div>
+</div>
+
+<table>
+  <thead><tr><th>Packet size</th><th>Packets/s</th><th>kB/s</th><th>kbit/s</th><th>Lost</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<div id="log"></div>
+
+<script>
+const NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const TX  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const RX  = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const SIZES = [20, 60, 120, 180, 244];
+const BURST_MS = 6000, PINGS = 25;
+
+const $ = id => document.getElementById(id);
+const pill = $('pill'), logEl = $('log');
+const log = m => { logEl.textContent += m + '\n'; };
+const status = (t, c) => { pill.textContent = t; pill.className = c || ''; };
+
+let tx = null, rx = null, onPacket = null;
+
+$('connect').addEventListener('click', async () => {
+  if (!navigator.bluetooth) { status('no Web Bluetooth — open in Chrome over http://localhost', 'err'); return; }
+  try {
+    $('connect').disabled = true;
+    status('choose your stick…');
+    const dev = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'StickJump' }], optionalServices: [NUS],
+    });
+    const svc = await (await dev.gatt.connect()).getPrimaryService(NUS);
+    tx = await svc.getCharacteristic(TX);
+    rx = await svc.getCharacteristic(RX);
+    await tx.startNotifications();
+    tx.addEventListener('characteristicvaluechanged', e => onPacket && onPacket(e.target.value));
+    dev.addEventListener('gattserverdisconnected', () => { status('disconnected', 'err'); $('run').disabled = true; });
+    status('connected to ' + dev.name, 'on');
+    $('run').disabled = false;
+    log('connected to ' + dev.name);
+  } catch (e) {
+    status(e.name === 'NotFoundError' ? 'no stick picked' : (e.message || String(e)), 'err');
+  } finally { $('connect').disabled = false; }
+});
+
+const write = b => rx.writeValueWithoutResponse(new TextEncoder().encode(b));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function measureLatency() {
+  const samples = [];
+  for (let i = 0; i < PINGS; i++) {
+    const t0 = performance.now();
+    const got = new Promise(res => { onPacket = () => res(performance.now()); });
+    await write('P');
+    const t1 = await Promise.race([got, sleep(2000).then(() => null)]);
+    if (t1) samples.push(t1 - t0);
+    onPacket = null;
+    await sleep(40);
+  }
+  samples.sort((a, b) => a - b);
+  return samples;
+}
+
+async function measureBurst(size) {
+  let count = 0, bytes = 0, min = Infinity, max = -1;
+  onPacket = v => {
+    count++; bytes += v.byteLength;
+    let s = '';
+    for (let i = 0; i < 8 && i < v.byteLength; i++) s += String.fromCharCode(v.getUint8(i));
+    const n = parseInt(s, 10);
+    if (!isNaN(n)) { if (n < min) min = n; if (n > max) max = n; }
+  };
+  const t0 = performance.now();
+  await write('S' + size);
+  await sleep(BURST_MS);
+  await write('X');
+  const secs = (performance.now() - t0) / 1000;
+  await sleep(400);
+  onPacket = null;
+  const span = max >= min ? max - min + 1 : 0;
+  return { size, count, secs, bytes,
+           lost: span ? (100 * (span - count) / span) : 0 };
+}
+
+$('run').addEventListener('click', async () => {
+  $('run').disabled = true;
+  $('rows').innerHTML = ''; logEl.textContent = '';
+  try {
+    status('measuring latency…');
+    const s = await measureLatency();
+    if (s.length) {
+      const med = s[Math.floor(s.length / 2)];
+      $('rtt').textContent = med.toFixed(1);
+      log(`round trip over ${s.length} pings: min ${s[0].toFixed(1)}  median ${med.toFixed(1)}  ` +
+          `p95 ${s[Math.floor(s.length * .95) - 1].toFixed(1)}  max ${s[s.length - 1].toFixed(1)} ms`);
+    }
+
+    let peak = 0, worstLoss = 0;
+    for (const size of SIZES) {
+      status(`burst @ ${size} bytes…`);
+      const row = document.createElement('tr');
+      row.className = 'running';
+      row.innerHTML = `<td>${size} B</td><td>…</td><td>…</td><td>…</td><td>…</td>`;
+      $('rows').appendChild(row);
+
+      const r = await measureBurst(size);
+      const kBs = r.bytes / r.secs / 1000;
+      peak = Math.max(peak, kBs);
+      worstLoss = Math.max(worstLoss, r.lost);
+      row.className = '';
+      row.innerHTML = `<td>${size} B</td><td>${(r.count / r.secs).toFixed(0)}</td>` +
+                      `<td>${kBs.toFixed(1)}</td><td>${(kBs * 8).toFixed(0)}</td>` +
+                      `<td>${r.lost.toFixed(2)}%</td>`;
+      await sleep(500);
+    }
+    $('peak').textContent = peak.toFixed(1);
+    $('loss').textContent = worstLoss.toFixed(2);
+    status('done', 'on');
+    log('peak ' + peak.toFixed(1) + ' kB/s (' + (peak * 8).toFixed(0) + ' kbit/s)');
+  } catch (e) {
+    status(e.message || String(e), 'err');
+    log('error: ' + (e.message || e));
+  } finally { $('run').disabled = false; }
+});
+</script>

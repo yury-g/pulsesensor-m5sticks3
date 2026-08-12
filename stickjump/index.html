@@ -1,0 +1,303 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>StickJump</title>
+<style>
+  :root { --ink:#e8eef7; --dim:#8fa3bd; --panel:#141c28; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; min-height:100%; background:#0a0f16; color:var(--ink);
+              font:15px/1.4 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  body { display:flex; flex-direction:column; align-items:center; justify-content:center;
+         gap:14px; padding:18px; }
+  canvas { background:#0d1420; border-radius:12px; box-shadow:0 12px 40px #0008;
+           max-width:96vw; height:auto; }
+  #bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  button { font:600 15px/1 inherit; padding:11px 18px; border-radius:9px; border:0;
+           background:#2f7ef7; color:#fff; cursor:pointer; }
+  button:hover { background:#4a90ff; }
+  button:disabled { background:#2a3546; color:#6b7a8f; cursor:default; }
+  #sticks { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; min-height:34px; }
+  .stick { display:flex; align-items:center; gap:8px; padding:7px 13px; border-radius:999px;
+           background:var(--panel); font-weight:600; font-size:13px; }
+  .stick .dot { width:10px; height:10px; border-radius:50%; }
+  .stick.off { opacity:.5; }
+  .hint { color:var(--dim); font-size:13px; text-align:center; max-width:640px; }
+</style>
+
+<canvas id="c" width="900" height="506"></canvas>
+<div id="sticks"></div>
+<div id="bar">
+  <button id="connect">+ Add a stick</button>
+  <span class="hint">Press <b>BtnA</b> on a stick to jump. Add as many sticks as you like —
+  each one gets its own runner. <b>Space</b> drives a keyboard player for testing.</span>
+</div>
+
+<script>
+// ---------------------------------------------------------------- constants
+const NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const TX  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';  // stick -> browser (notify)
+
+const W = 900, H = 506;
+const GRAV = 2400, JUMP_V = -820, RUN = 300;
+const CUT = -220, COYOTE = 0.10, BUFFER = 0.12;
+const GROUND = 400, PH = 46, PW = 30;
+const APEX = JUMP_V * JUMP_V / (2 * GRAV);          // ~140px
+const COLORS = ['#f87171', '#60a5fa', '#4ade80', '#fbbf24', '#c084fc', '#f472b6'];
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+
+// ---------------------------------------------------------------- the world
+let S;
+function reset() {
+  S = { t: 0, cam: 0, plats: [], coins: [], nextX: 380, players: [] };
+  while (S.nextX < 2600) addFeature();
+}
+
+// Everything sits within a single jump of the ground, so nothing is ever
+// unreachable and no runner can get stuck.
+function addFeature() {
+  const x = S.nextX + 140 + Math.random() * 180;
+  if (Math.random() < 0.55) {
+    const h = 60 + Math.random() * (APEX - 85);
+    const w = 130 + Math.random() * 150;
+    const p = { x, w, y: GROUND - h };
+    S.plats.push(p);
+    const n = 2 + (Math.random() * 3 | 0);
+    for (let i = 0; i < n; i++) S.coins.push({ x: p.x + 30 + i * 36, y: p.y - 34, got: false });
+    S.nextX = x + w;
+  } else {
+    const n = 4 + (Math.random() * 3 | 0), span = 190;
+    for (let i = 0; i < n; i++) {
+      const u = i / (n - 1);
+      S.coins.push({ x: x + u * span, y: GROUND - 40 - Math.sin(u * Math.PI) * (APEX - 55), got: false });
+    }
+    S.nextX = x + span;
+  }
+}
+
+// ---------------------------------------------------------------- players
+function addPlayer(label) {
+  const i = S.players.length;
+  const p = { label, color: COLORS[i % COLORS.length], live: true,
+              x: 120 - i * 34, y: GROUND - PH, vy: 0, onGround: true,
+              coyote: 0, buffer: 0, coins: 0, jumps: 0 };
+  S.players.push(p);
+  return p;
+}
+function jumpDown(p) { if (p) { p.buffer = BUFFER; p.jumps++; } }
+function jumpUp(p)   { if (p && p.vy < CUT) p.vy = CUT; }
+
+// A keyboard player exists only once someone actually presses a key, so a
+// page driven purely by sticks never shows a stray runner.
+let kbd = null;
+addEventListener('keydown', e => {
+  if (e.code !== 'Space' && e.code !== 'ArrowUp') return;
+  e.preventDefault();
+  if (e.repeat) return;
+  if (!kbd) { kbd = addPlayer('Keyboard'); renderSticks(); }
+  jumpDown(kbd);
+});
+addEventListener('keyup', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jumpUp(kbd); }
+});
+
+// ---------------------------------------------------------------- physics
+function stepPlayer(p, dt) {
+  p.vy += GRAV * dt;
+  const prevBottom = p.y + PH;
+  p.x += RUN * dt;
+  p.y += p.vy * dt;
+
+  p.coyote = p.onGround ? COYOTE : Math.max(0, p.coyote - dt);
+  p.buffer = Math.max(0, p.buffer - dt);
+  if (p.buffer > 0 && (p.onGround || p.coyote > 0)) {
+    p.vy = JUMP_V; p.onGround = false; p.coyote = 0; p.buffer = 0;
+  }
+
+  p.onGround = false;
+  for (const pl of S.plats) {                 // one-way: land from above only
+    if (p.x + PW > pl.x && p.x < pl.x + pl.w && p.vy >= 0 &&
+        prevBottom <= pl.y + 1 && p.y + PH >= pl.y) {
+      p.y = pl.y - PH; p.vy = 0; p.onGround = true; break;
+    }
+  }
+  // The ground always catches -- but only on the way down, or it would swallow
+  // the jump in the very frame it starts.
+  if (!p.onGround && p.vy >= 0 && p.y + PH >= GROUND) {
+    p.y = GROUND - PH; p.vy = 0; p.onGround = true;
+  }
+
+  for (const c of S.coins)
+    if (!c.got && Math.abs(c.x - (p.x + PW / 2)) < 28 && Math.abs(c.y - (p.y + PH / 2)) < 32) {
+      c.got = true; p.coins++;
+    }
+}
+
+function step(dt) {
+  S.t += dt;
+  for (const p of S.players) stepPlayer(p, dt);
+  // Follow the leader, with enough margin behind that a full field of sticks
+  // all stays on screen.
+  const lead = S.players.length ? Math.max(...S.players.map(p => p.x)) : S.cam + 280;
+  S.cam = lead - 280;
+  while (S.nextX < S.cam + 2400) addFeature();
+  S.plats = S.plats.filter(p => p.x + p.w > S.cam - 500);
+  S.coins = S.coins.filter(c => c.x > S.cam - 500);
+}
+
+// ---------------------------------------------------------------- rendering
+function draw() {
+  ctx.fillStyle = '#0d1420'; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 3; i++) {
+    const off = (S.cam * (0.15 + i * 0.12)) % 300;
+    ctx.fillStyle = ['#131d2c', '#16243a', '#1b2c47'][i];
+    for (let k = -1; k < 5; k++) {
+      ctx.beginPath(); ctx.arc(k * 300 - off + 150, 430 - i * 34, 150 - i * 12, Math.PI, 0); ctx.fill();
+    }
+  }
+
+  ctx.save(); ctx.translate(-S.cam, 0);
+  ctx.fillStyle = '#2b3d57'; ctx.fillRect(S.cam - 60, GROUND, W + 120, H - GROUND);
+  ctx.fillStyle = '#4ade80'; ctx.fillRect(S.cam - 60, GROUND, W + 120, 7);
+  for (const p of S.plats) {
+    ctx.fillStyle = '#2b3d57'; ctx.fillRect(p.x, p.y, p.w, 14);
+    ctx.fillStyle = '#4ade80'; ctx.fillRect(p.x, p.y, p.w, 6);
+  }
+  for (const c of S.coins) {
+    if (c.got) continue;
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath(); ctx.arc(c.x, c.y + Math.sin(S.t * 4 + c.x) * 4, 9, 0, 7); ctx.fill();
+  }
+  for (const p of S.players) {
+    const sq = p.onGround ? 1 : 1 + Math.max(-0.18, Math.min(0.18, p.vy / 4000));
+    ctx.globalAlpha = p.live ? 1 : 0.4;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y + PH - PH * sq, PW, PH * sq);
+    ctx.fillStyle = '#fff'; ctx.fillRect(p.x + 19, p.y + 12, 7, 7);
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+
+  let ty = 34;
+  for (const p of S.players) {
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(30, ty - 5, 8, 0, 7); ctx.fill();
+    ctx.fillStyle = '#e8eef7'; ctx.font = '700 17px ui-sans-serif,system-ui';
+    ctx.fillText(p.label, 46, ty);
+    ctx.fillStyle = '#fbbf24'; ctx.font = '700 17px ui-sans-serif,system-ui';
+    ctx.fillText('◍ ' + p.coins, 200, ty);
+    ty += 26;
+  }
+  if (!S.players.length) {
+    ctx.fillStyle = '#8fa3bd'; ctx.font = '600 19px ui-sans-serif,system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('Add a stick below, or tap Space, to put a runner on the track', W / 2, H / 2);
+    ctx.textAlign = 'left';
+  }
+}
+
+let last = 0;
+function frame(ts) {
+  const dt = Math.min(0.033, (ts - last) / 1000 || 0);
+  last = ts; step(dt); draw();
+  requestAnimationFrame(frame);
+}
+reset(); requestAnimationFrame(frame);
+
+// ---------------------------------------------------------------- sticks
+const listEl = document.getElementById('sticks'), btn = document.getElementById('connect');
+const links = [];                                  // {device, player, state}
+
+function renderSticks() {
+  listEl.innerHTML = '';
+  for (const l of links) {
+    const el = document.createElement('div');
+    el.className = 'stick' + (l.state === 'connected' ? '' : ' off');
+    el.innerHTML = '<span class="dot"></span><span></span>';
+    el.querySelector('.dot').style.background = l.player.color;
+    el.lastChild.textContent = l.player.label + ' — ' + l.state;
+    listEl.appendChild(el);
+  }
+  if (kbd && !links.some(l => l.player === kbd)) {
+    const el = document.createElement('div');
+    el.className = 'stick';
+    el.innerHTML = '<span class="dot"></span><span>Keyboard — Space</span>';
+    el.querySelector('.dot').style.background = kbd.color;
+    listEl.appendChild(el);
+  }
+}
+
+// Every byte the stick notifies lands here: "1" = button down, "0" = button up.
+function onNotify(player, value) {
+  const s = new TextDecoder().decode(value);
+  for (const ch of s) { if (ch === '1') jumpDown(player); else if (ch === '0') jumpUp(player); }
+}
+
+async function attach(link) {
+  link.state = 'connecting'; renderSticks();
+  const server = await link.device.gatt.connect();
+  const tx = await (await server.getPrimaryService(NUS)).getCharacteristic(TX);
+  await tx.startNotifications();
+  tx.addEventListener('characteristicvaluechanged', e => onNotify(link.player, e.target.value));
+  link.state = 'connected'; link.player.live = true; renderSticks();
+}
+
+async function onDrop(link) {
+  link.state = 'reconnecting'; link.player.live = false; renderSticks();
+  for (let i = 0; i < 6; i++) {
+    await new Promise(r => setTimeout(r, 1200));
+    try { await attach(link); return; } catch (e) { /* keep trying */ }
+  }
+  link.state = 'disconnected'; renderSticks();
+}
+
+function adopt(device) {
+  const existing = links.find(l => l.device.id === device.id);
+  if (existing) return existing;
+  const name = (device.name || 'Stick').replace(/^StickJump-?/, '') || 'Stick';
+  const link = { device, player: addPlayer('Stick ' + name), state: 'new' };
+  device.addEventListener('gattserverdisconnected', () => onDrop(link));
+  links.push(link);
+  renderSticks();
+  return link;
+}
+
+async function connect() {
+  if (!navigator.bluetooth) {
+    alert('This page needs Web Bluetooth: open it in Chrome over http://localhost.');
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'StickJump' }], optionalServices: [NUS],
+    });
+    await attach(adopt(device));
+  } catch (e) {
+    if (e.name !== 'NotFoundError') alert(e.message || e);
+  } finally { btn.disabled = false; }
+}
+btn.addEventListener('click', connect);
+
+// Sticks already permitted on this origin reconnect on their own, so a repeat
+// visit needs no chooser at all.
+(async () => {
+  try {
+    if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return;
+    for (const d of await navigator.bluetooth.getDevices()) {
+      const link = adopt(d);
+      link.state = 'waiting for stick'; renderSticks();
+      attach(link).catch(() => {
+        link.state = 'asleep — press BtnA or re-add'; renderSticks();
+        if (d.watchAdvertisements) {
+          d.watchAdvertisements().catch(() => {});
+          d.addEventListener('advertisementreceived', () => attach(link).catch(() => {}), { once: true });
+        }
+      });
+    }
+  } catch (e) { /* getDevices is not available everywhere; the button still works */ }
+})();
+
+// Test hook: lets an automated harness drive input and read game state.
+window.__sj = { reset, step, addPlayer, jumpDown, jumpUp, onNotify,
+                get state() { return S; }, get links() { return links; } };
+</script>
