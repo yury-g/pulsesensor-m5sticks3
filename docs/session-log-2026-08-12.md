@@ -78,3 +78,61 @@ by macOS; the firmware requests a faster one but the central decides.
 Only one physical stick was available. The multi-stick path (a runner per
 stick, distinct colours, per-stick coin counts) is verified in simulation up to
 six runners, not on real hardware.
+
+---
+
+# PulseWave — a live pulse waveform in the browser
+
+Same low-friction pattern as StickJump, one step up in complexity: a
+PulseSensor on GPIO 2, streamed over BLE, drawn as a 7-second scrolling trace.
+See `pulsewave/README.md`.
+
+## The finding that mattered: 500 Hz was a lie
+
+Sampling is driven by `machine.Timer` (verified good on all four timer IDs at
+499 Hz with nothing else running). But once BLE is streaming, the 2 ms period
+cannot hold. Stamping every sample with `ticks_us` **inside the ISR** exposed it:
+
+| nominal | measured true rate | mean interval | lost |
+| --- | --- | --- | --- |
+| 500 Hz | 493.0 Hz | 2028 µs — 1.4 % slow, drifting | 0 |
+| 250 Hz | 250.00 Hz | 4000.0 µs — exact | 0 |
+
+Dropped to 250 Hz, which is still ~10x oversampled for a waveform whose useful
+content is under 25 Hz. The lesson generalises: **stamp the samples and let the
+receiver measure the rate** rather than trusting the configured one. Without the
+timestamps this would have shipped as "500 Hz" and been wrong by 1.4 %.
+
+Because every sample carries its own timestamp, the residual scheduler jitter
+(sd 227 µs) does not distort the trace — the page plots on a true time axis
+instead of assuming uniform spacing.
+
+## macOS caches BLE GAP names — this cost real time
+
+After reflashing, the stick advertised `PulseWave-1F00` while CoreBluetooth kept
+reporting the cached `StickJump-1F00`. Every name-based matcher failed and it
+looked exactly like "the firmware is not advertising". Confirmed by reading
+`AdvertisementData.local_name` (from the packet) against `device.name` (from the
+OS cache). Consequences:
+
+* the page filters the chooser by **service UUID, not name**;
+* test harnesses match on the advertised `local_name`.
+
+## Protocol shape worth reusing
+
+`<uint32 first_index><uint16 count><uint16 rate_hz><uint32 t_us>` + N × uint16.
+An **absolute** sample index makes loss unambiguous rather than inferred — the
+receiver can state "0 samples missing" as a fact. Measured over real BLE from a
+cold boot: 188 packets, 3008 samples, 0 missing.
+
+Batching matters: the earlier throughput sweep showed bandwidth scales with
+packet size, not packet rate, so samples go out 16 at a time (64 ms) rather than
+one notification per sample.
+
+## Still not verified
+
+The in-Chrome connection for PulseWave was not driven by an automated harness.
+The CDP `DeviceAccess` approach that worked for StickJump was abandoned here
+because relaunching Chrome repeatedly was disruptive; the page is verified
+against synthetic packets in the exact wire format, and the firmware over real
+BLE with a Python central.

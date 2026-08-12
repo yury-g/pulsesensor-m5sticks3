@@ -6,6 +6,12 @@
       "runtimeExecutable": "/usr/bin/python3",
       "runtimeArgs": ["-m", "http.server", "8123", "--directory", "stickjump"],
       "port": 8123
+    },
+    {
+      "name": "pulsewave",
+      "runtimeExecutable": "/usr/bin/python3",
+      "runtimeArgs": ["-m", "http.server", "8124", "--directory", "pulsewave"],
+      "port": 8124
     }
   ]
 }

@@ -1,0 +1,101 @@
+#!/bin/zsh
+# stick.sh — one tool for everything M5StickS3.
+#   stick.sh status              what's connected, what's it running
+#   stick.sh run <file.py>       run script now (RAM, ~1s, not persistent)
+#   stick.sh deploy <file.py>    make script the boot program (persists)
+#   stick.sh reset               reboot the board, leave it running
+#   stick.sh watch [secs]        stream serial output (default 8s)
+#   stick.sh flash <image.bin>   full firmware flash (rarely needed)
+set -u
+CMD=${1:-status}
+# With a Tab5 also plugged in there are several usbmodem nodes, so "first one"
+# is wrong. Override with STICK_PORT=/dev/cu.usbmodemXXXX, otherwise pick the
+# first node that actually answers as MicroPython.
+if [ -n "${STICK_PORT:-}" ]; then
+  PORT="$STICK_PORT"
+else
+  PORT=""
+  for _p in $(ls /dev/ | grep '^cu\.usbmodem'); do
+    if /usr/bin/python3 -c "
+import serial,sys,time
+try:
+    s=serial.Serial('/dev/$_p',115200,timeout=0.6)
+    s.write(b'\x03\x03\r\n'); time.sleep(0.3)
+    s.write(b'print(1)\r\n'); time.sleep(0.4)
+    d=s.read(200); s.close()
+    sys.exit(0 if b'1' in d or b'>>>' in d else 1)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null; then PORT="/dev/$_p"; break; fi
+  done
+  [ -z "$PORT" ] && PORT=$(ls /dev/ | grep -m1 '^cu\.usbmodem' | sed 's|^|/dev/|')
+fi
+DIR=/Users/mininarwhal/MStackSTICK-S3
+ESPTOOL=/Users/mininarwhal/Library/Arduino15/packages/m5stack/tools/esptool_py/5.0.dev1/esptool
+
+[ -z "$PORT" ] && { echo "NO DEVICE on USB — replug the stick or press its power button"; exit 1; }
+
+interrupt() {
+  /usr/bin/python3 - "$PORT" <<'EOF'
+import serial, sys, time
+s = serial.Serial(sys.argv[1], 115200, timeout=1)
+s.write(b'\x03\x03'); time.sleep(0.4); s.close()
+EOF
+}
+
+# Reset over raw serial rather than `mpremote exec machine.reset()`. mpremote
+# waits for the exec to return, and a board that immediately starts spewing
+# serial never lets it - on the Tab5 that looked exactly like a 45s hang, and
+# the only cure was pkill. Writing the reset and closing the port does the same
+# job and returns at once.
+hard_reset() {
+  /usr/bin/python3 - "$PORT" <<'EOF'
+import serial, sys, time
+s = serial.Serial(sys.argv[1], 115200, timeout=1)
+s.write(b'\x03\x03'); time.sleep(0.3)
+s.write(b'import machine; machine.reset()\r\n'); time.sleep(0.3)
+s.close()
+EOF
+}
+
+case "$CMD" in
+  status)
+    interrupt
+    /usr/bin/python3 -m mpremote connect "$PORT" resume exec "
+import machine, os
+print('port: $PORT')
+print('chip id:', machine.unique_id().hex())
+print('files:', os.listdir('/flash') if 'flash' in os.listdir('/') else os.listdir())
+" 2>/dev/null || echo "$PORT present but no MicroPython REPL (C firmware or hung) — try: stick.sh flash"
+    ;;
+  run)
+    interrupt
+    /usr/bin/python3 -m mpremote connect "$PORT" resume run --no-follow "$2" && echo "RUNNING: $2 (until reset)"
+    ;;
+  deploy)
+    interrupt
+    /usr/bin/python3 -m mpremote connect "$PORT" resume fs cp "$2" :main.py && echo "DEPLOYED: $2 -> boots at every power-on"
+    hard_reset
+    echo "RESET: booting $2 now — read it passively with 'stick.sh watch'"
+    ;;
+  reset)
+    hard_reset
+    echo "RESET: $PORT"
+    ;;
+  watch)
+    /usr/bin/python3 - "$PORT" "${2:-8}" <<'EOF'
+import serial, sys, time
+s = serial.Serial(sys.argv[1], 115200, timeout=1)
+t = time.time()
+while time.time() - t < float(sys.argv[2]):
+    d = s.read(512)
+    if d: print(d.decode(errors='replace'), end='')
+print("\n[watch done]")
+EOF
+    ;;
+  flash)
+    "$DIR/flash.sh" "$2" "$PORT"
+    ;;
+  *)
+    echo "usage: stick.sh {status|run|deploy|reset|watch|flash}"; exit 1;;
+esac
