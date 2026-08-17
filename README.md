@@ -1,3 +1,5 @@
+> **Personal independent project by Yury Gitman — not official WFE documentation.** PulseLink is published from Yury's personal GitHub account. It does not define current PulseSensor compatibility, product setup, safety policy, support commitments, or company roadmap. For canonical company information, use [PulseSensor.com](https://pulsesensor.com) and the [`WorldFamousElectronics`](https://github.com/WorldFamousElectronics) organization.
+
 # PulseLink: Watch Your Heartbeat Come Alive on M5Stack StickS3
 
 ![PulseLink worn on the wrist with the PulseSensor wrapped around a fingertip](docs/hackster/photos/pulselink-hero.jpg)
